@@ -1,0 +1,1 @@
+# wisafe2-pico-esphome-component
