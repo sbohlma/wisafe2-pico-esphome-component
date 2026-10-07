@@ -1,0 +1,406 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<title>WiSafe2-Bridge — Hardware Pico 2 W</title>
+<style>
+  @page { size: A4; margin: 12mm 12mm 14mm 12mm; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font-family: "Liberation Sans", "DejaVu Sans", sans-serif;
+    font-size: 10.5pt;
+    line-height: 1.35;
+    color: #111;
+  }
+  h1 { font-size: 18pt; line-height: 1.15; margin: 0 0 2mm; }
+  h2 {
+    font-size: 13pt;
+    margin: 5mm 0 2mm;
+    padding-bottom: 1mm;
+    border-bottom: 0.4mm solid #111;
+    page-break-after: avoid;
+  }
+  h3 { font-size: 11pt; margin: 3.5mm 0 1.5mm; page-break-after: avoid; }
+  p { margin: 0 0 2mm; }
+  .meta { color: #333; font-size: 9.5pt; margin-bottom: 3mm; }
+  .banner {
+    border: 0.4mm solid #111;
+    padding: 2.5mm 3mm;
+    margin: 0 0 3mm;
+    page-break-inside: avoid;
+  }
+  .banner strong { display: block; margin-bottom: 1mm; }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 0 0 3mm;
+    page-break-inside: avoid;
+  }
+  th, td {
+    border: 0.2mm solid #222;
+    padding: 1.1mm 1.6mm;
+    vertical-align: top;
+    text-align: left;
+  }
+  th { background: #eee; font-weight: 700; }
+  .check { width: 7mm; text-align: center; font-size: 12pt; }
+  code, .mono { font-family: "Liberation Mono", "DejaVu Sans Mono", monospace; font-size: 9pt; }
+  ul { margin: 0 0 2mm 4.5mm; padding: 0; }
+  li { margin: 0 0 1mm; }
+  .page { page-break-before: always; }
+  .keep { page-break-inside: avoid; }
+  .small { font-size: 9pt; color: #222; }
+  .schematic {
+    width: 100%;
+    height: auto;
+    page-break-inside: avoid;
+  }
+  .scale-wrap { page-break-inside: avoid; margin-top: 2mm; }
+  .foot {
+    margin-top: 4mm;
+    font-size: 8.5pt;
+    color: #333;
+  }
+</style>
+</head>
+<body>
+
+<h1>WiSafe2-Bridge für Home Assistant</h1>
+<p class="meta">Hardware-Unterlage · Raspberry Pi Pico 2 W und FireAngel-WiSafe2-Funkmodul · Revision 2 · 7. Oktober 2026</p>
+
+<div class="banner">
+  <strong>Diese Brücke ist kein Ersatz für die Rauchmelder.</strong>
+  Die Melder bleiben die Sicherheitsanlage und arbeiten ohne dieses Gerät. Die Brücke ist ein zusätzlicher Teilnehmer im 868-MHz-Netz und meldet Ereignisse an Home Assistant. Ein Ausfall der Brücke darf nicht der einzige Hinweis auf einen Alarm sein.
+</div>
+
+<h2>1. Umfang</h2>
+<p>Das Blatt beschreibt die Hardware zwischen dem Pico 2 W und einem originalen WiSafe2-Funkmodul. Die Firmware im Pico hört als SPI-Slave mit und sendet noch keine Befehle. IRQ wird ab dem Start als Ausgang auf Low gelegt. Die 3,3-V-Leitung zum Modul wird erst geschlossen, nachdem diese Firmware läuft.</p>
+<p>Das Funkmodul ist SPI-Master. Es erzeugt Takt und Chip-Select. Der Pico ist SPI-Slave. Beide Seiten arbeiten mit 3,3 V. Ein Pegelwandler gehört nicht in diesen Aufbau. Der Pico verträgt an den GPIO keine 5 V.</p>
+
+<h2>2. Stückliste</h2>
+<table>
+  <thead>
+    <tr><th class="check">✓</th><th>Teil</th><th>Wert / Typ</th><th>Bezug</th></tr>
+  </thead>
+  <tbody>
+    <tr><td class="check">☐</td><td>U1</td><td>Raspberry Pi Pico 2 W</td><td>Aufdruck muss „Pico 2 W“ lauten. Ein Pico 2 ohne W hat kein WLAN.</td></tr>
+    <tr><td class="check">☐</td><td>U2</td><td>WiSafe2-Funkmodul</td><td>Bevorzugt rote Platine aus einer W2-SVP-630 / CP-LED, ohne Lithiumzelle.</td></tr>
+    <tr><td class="check">☐</td><td>R1–R5</td><td>33 Ω, 5 Stück</td><td>Serie in CS, IRQ, MOSI, SCK, MISO. 22 Ω bis 47 Ω ist gleichwertig.</td></tr>
+    <tr><td class="check">☐</td><td>R6</td><td>10 kΩ</td><td>Pull-up von CS nach 3,3 V. Hält Select im Leerlauf auf High.</td></tr>
+    <tr><td class="check">☐</td><td>R7</td><td>10 kΩ</td><td>Pull-down von IRQ nach GND. Hält IRQ auf Low, solange die Firmware den Pin noch nicht treibt.</td></tr>
+    <tr><td class="check">☐</td><td>C1</td><td>100 nF keramisch</td><td>Direkt an Pad 2 gegen Pad 9.</td></tr>
+    <tr><td class="check">☐</td><td>C2</td><td>10 µF keramisch</td><td>Direkt an Pad 2 gegen Pad 9.</td></tr>
+    <tr><td class="check">☐</td><td>JP1</td><td>Lötbrücke oder 2-polige Stiftleiste</td><td>Schaltet Pad 8 an 3,3 V. Stellung hängt von der Modulvariante ab, siehe Abschnitt 6.</td></tr>
+    <tr><td class="check">☐</td><td>AE1</td><td>Drahtantenne</td><td>86 mm Viertelwelle oder 173 mm Halbwelle, gemessen ab dem Antennenpad.</td></tr>
+    <tr><td class="check">☐</td><td>J1</td><td>Stiftleiste 1×6, 2,54 mm</td><td>Messpunkte für den Logikanalysator.</td></tr>
+    <tr><td class="check">☐</td><td>—</td><td>Micro-USB-Kabel</td><td>Einzige Versorgung. 5 V nur über USB, nie an den Pin 3V3.</td></tr>
+  </tbody>
+</table>
+<p class="small">Die Serienwiderstände dämpfen das Klingeln der schnellen SPI-Flanken. Ohne sie kann der Slave auf einer Leitung zusätzliche Taktimpulse sehen. Sie verschieben keinen Pegel und begrenzen im Ruhezustand keinen Strom. Auf dem Steckbrett gehören sie dazu.</p>
+
+<h2>3. Schaltplan</h2>
+<p class="small">Der Siebdruck des Pico mit „MISO“ und „MOSI“ gilt nur, wenn der Pico Master ist. Hier ist das Funkmodul Master. Maßgeblich sind die Pinnummern und die Richtungspfeile.</p>
+
+<svg class="schematic" viewBox="0 0 760 640" xmlns="http://www.w3.org/2000/svg" font-family="Liberation Sans, DejaVu Sans, sans-serif">
+  <rect x="8" y="8" width="744" height="624" fill="#fff" stroke="#111" stroke-width="1"/>
+
+  <rect x="24" y="24" width="196" height="560" fill="#fff" stroke="#111" stroke-width="1.4"/>
+  <text x="122" y="46" text-anchor="middle" font-size="14" font-weight="700">U1 Pico 2 W</text>
+  <text x="122" y="62" text-anchor="middle" font-size="10">USB oben · Bestückungsseite</text>
+  <g font-size="11">
+    <text x="36" y="92">Pin 40 VBUS</text><text x="130" y="92">nur Micro-USB</text>
+    <text x="36" y="112">Pin 39 VSYS</text><text x="130" y="112">offen</text>
+    <text x="36" y="148">Pin 36 3V3</text>
+    <text x="36" y="188">Pin 38 GND</text>
+  <path d="M206 184 V544" fill="none" stroke="#111" stroke-width="1" stroke-dasharray="3 2"/>
+    <text x="36" y="254">Pin 26 GP20</text><text x="130" y="254">IRQ aus</text>
+    <text x="36" y="314">Pin 25 GP19</text><text x="130" y="314">MISO aus</text>
+    <text x="36" y="374">Pin 24 GP18</text><text x="130" y="374">SCK ein</text>
+    <text x="36" y="434">Pin 22 GP17</text><text x="130" y="434">CS ein</text>
+    <text x="36" y="494">Pin 21 GP16</text><text x="130" y="494">MOSI ein</text>
+    <text x="36" y="548">Pin 23 GND</text>
+  </g>
+  <text x="122" y="568" text-anchor="middle" font-size="9">GP0/GP1 frei. GP23–25 und GP29 intern.</text>
+
+  <rect x="540" y="24" width="196" height="560" fill="#fff" stroke="#111" stroke-width="1.4"/>
+  <text x="638" y="46" text-anchor="middle" font-size="14" font-weight="700">U2 WiSafe2</text>
+  <text x="638" y="62" text-anchor="middle" font-size="10">Pad 1 = eckiges Pad</text>
+  <g font-size="11">
+    <text x="552" y="148">Pad 2 · 3V3</text>
+    <text x="552" y="188">Pad 8 · Bat+</text>
+    <text x="552" y="254">Pad 3 · IRQ ein</text>
+    <text x="552" y="314">Pad 10 · MISO ein</text>
+    <text x="552" y="374">Pad 7 · SCK aus</text>
+    <text x="552" y="434">Pad 1 · CS aus</text>
+    <text x="552" y="494">Pad 5 · MOSI aus</text>
+    <text x="552" y="548">Pad 9 · GND</text>
+  </g>
+  <text x="638" y="578" text-anchor="middle" font-size="9">Pad 4 und 6 offen · Pad 12 = ANT</text>
+
+  <!-- 3V3 bus -->
+  <path d="M220 144 H540" fill="none" stroke="#111" stroke-width="1.4"/>
+  <circle cx="250" cy="144" r="2.6" fill="#111"/>
+  <circle cx="360" cy="144" r="2.6" fill="#111"/>
+  <circle cx="470" cy="144" r="2.6" fill="#111"/>
+  <text x="300" y="136" font-size="11">3V3</text>
+
+  <!-- GND bus -->
+  <path d="M220 544 H540" fill="none" stroke="#111" stroke-width="1.6"/>
+  <circle cx="250" cy="544" r="2.6" fill="#111"/>
+  <circle cx="430" cy="544" r="2.6" fill="#111"/>
+  <text x="300" y="538" font-size="11">GND</text>
+
+  <!-- caps from 3V3 down toward GND, stopped above the signal area and noted -->
+  <path d="M250 144 V168" fill="none" stroke="#111" stroke-width="1.2"/>
+  <path d="M242 168 h16 M242 176 h16" fill="none" stroke="#111" stroke-width="1.3"/>
+  <path d="M266 168 h16 M266 176 h16" fill="none" stroke="#111" stroke-width="1.3"/>
+  <path d="M250 176 V196 M274 176 V196 H300" fill="none" stroke="#111" stroke-width="1.2"/>
+  <text x="304" y="192" font-size="11">C1 100 nF</text>
+  <text x="304" y="206" font-size="11">C2 10 µF</text>
+  <path d="M250 196 V242 M250 258 V302 M250 318 V362 M250 378 V422 M250 438 V482 M250 498 V544" fill="none" stroke="#111" stroke-width="1.2"/>
+
+  <!-- JP1 on 3V3 to pad 8 -->
+  <path d="M470 144 V176" fill="none" stroke="#111" stroke-width="1.2"/>
+  <circle cx="464" cy="176" r="2.4" fill="#111"/>
+  <circle cx="476" cy="176" r="2.4" fill="#111"/>
+  <path d="M462 170 H478" fill="none" stroke="#111" stroke-width="1.4"/>
+  <text x="484" y="174" font-size="11">JP1</text>
+  <path d="M470 176 V184 H540" fill="none" stroke="#111" stroke-width="1.2"/>
+
+  <!-- signal wires, interrupted where a vertical net crosses without connecting -->
+  <g fill="none" stroke="#111" stroke-width="1.2">
+    <path d="M220 250 H246 M254 250 H330"/>
+    <path d="M386 250 H424 M436 250 H540"/>
+    <path d="M220 310 H246 M254 310 H330"/>
+    <path d="M386 310 H394 M406 310 H484 M496 310 H540"/>
+    <path d="M220 370 H246 M254 370 H330"/>
+    <path d="M386 370 H394 M406 370 H484 M496 370 H540"/>
+    <path d="M220 430 H246 M254 430 H330"/>
+    <path d="M386 430 H484 M496 430 H540"/>
+    <path d="M220 490 H246 M254 490 H330"/>
+    <path d="M386 490 H484 M496 490 H540"/>
+  </g>
+  <g font-size="10">
+    <rect x="330" y="241" width="56" height="18" fill="#fff" stroke="#111"/>
+    <text x="358" y="254" text-anchor="middle">R2 33 Ω</text>
+    <rect x="330" y="301" width="56" height="18" fill="#fff" stroke="#111"/>
+    <text x="358" y="314" text-anchor="middle">R5 33 Ω</text>
+    <rect x="330" y="361" width="56" height="18" fill="#fff" stroke="#111"/>
+    <text x="358" y="374" text-anchor="middle">R4 33 Ω</text>
+    <rect x="330" y="421" width="56" height="18" fill="#fff" stroke="#111"/>
+    <text x="358" y="434" text-anchor="middle">R1 33 Ω</text>
+    <rect x="330" y="481" width="56" height="18" fill="#fff" stroke="#111"/>
+    <text x="358" y="494" text-anchor="middle">R3 33 Ω</text>
+  </g>
+
+  <!-- R6: 3V3 down to CS, hops over IRQ, MISO and SCK -->
+  <path d="M400 144 V242" fill="none" stroke="#111" stroke-width="1.2"/>
+  <path d="M394 250 A6 6 0 0 1 406 250" fill="none" stroke="#111" stroke-width="1.2"/>
+  <path d="M400 258 V302" fill="none" stroke="#111" stroke-width="1.2"/>
+  <path d="M394 310 A6 6 0 0 1 406 310" fill="none" stroke="#111" stroke-width="1.2"/>
+  <path d="M400 318 V362" fill="none" stroke="#111" stroke-width="1.2"/>
+  <path d="M394 370 A6 6 0 0 1 406 370" fill="none" stroke="#111" stroke-width="1.2"/>
+  <path d="M400 378 V430" fill="none" stroke="#111" stroke-width="1.2"/>
+  <rect x="391" y="188" width="18" height="36" fill="#fff" stroke="#111"/>
+  <text x="414" y="204" font-size="10">R6</text>
+  <text x="414" y="216" font-size="10">10 kΩ</text>
+  <circle cx="400" cy="430" r="2.6" fill="#111"/>
+  <circle cx="400" cy="144" r="2.6" fill="#111"/>
+
+  <!-- R7: IRQ down to GND, hops over the four lower signals -->
+  <path d="M490 250 V302" fill="none" stroke="#111" stroke-width="1.2"/>
+  <path d="M484 310 A6 6 0 0 1 496 310" fill="none" stroke="#111" stroke-width="1.2"/>
+  <path d="M490 318 V362" fill="none" stroke="#111" stroke-width="1.2"/>
+  <path d="M484 370 A6 6 0 0 1 496 370" fill="none" stroke="#111" stroke-width="1.2"/>
+  <path d="M490 378 V422" fill="none" stroke="#111" stroke-width="1.2"/>
+  <path d="M484 430 A6 6 0 0 1 496 430" fill="none" stroke="#111" stroke-width="1.2"/>
+  <path d="M490 438 V482" fill="none" stroke="#111" stroke-width="1.2"/>
+  <path d="M484 490 A6 6 0 0 1 496 490" fill="none" stroke="#111" stroke-width="1.2"/>
+  <path d="M490 498 V544" fill="none" stroke="#111" stroke-width="1.2"/>
+  <rect x="481" y="258" width="18" height="36" fill="#fff" stroke="#111"/>
+  <text x="504" y="274" font-size="10">R7</text>
+  <text x="504" y="286" font-size="10">10 kΩ</text>
+  <circle cx="490" cy="250" r="2.6" fill="#111"/>
+
+  <!-- capacitor ground hops over the five signal lines -->
+  <path d="M244 250 A6 6 0 0 1 256 250" fill="none" stroke="#111" stroke-width="1.2"/>
+  <path d="M244 310 A6 6 0 0 1 256 310" fill="none" stroke="#111" stroke-width="1.2"/>
+  <path d="M244 370 A6 6 0 0 1 256 370" fill="none" stroke="#111" stroke-width="1.2"/>
+  <path d="M244 430 A6 6 0 0 1 256 430" fill="none" stroke="#111" stroke-width="1.2"/>
+  <path d="M244 490 A6 6 0 0 1 256 490" fill="none" stroke="#111" stroke-width="1.2"/>
+
+  <text x="24" y="610" font-size="10">MOSI und SCK treibt das Modul. MISO und IRQ treibt der Pico. CS treibt das Modul, aktiv Low, ein Puls je Byte. J1 an der Modulseite von R1–R5: CS, IRQ, MOSI, SCK, MISO, GND.</text>
+</svg>
+
+<div class="page"></div>
+
+<h2>4. Verdrahtung zum Abhaken</h2>
+<p>Alle GPIO-Nummern sind die des RP2350. Die Pin-Nummer ist die Position an der 40-poligen Stiftleiste, USB-Stecker nach oben, Bauteile zu dir.</p>
+<table>
+  <thead>
+    <tr>
+      <th class="check">✓</th>
+      <th>Von</th>
+      <th>Über</th>
+      <th>Nach</th>
+      <th>Richtung</th>
+      <th>Farbe</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr><td class="check">☐</td><td>Pico Pin 36, 3V3</td><td>direkt</td><td>U2 Pad 2</td><td>Versorgung</td><td>rot</td></tr>
+    <tr><td class="check">☐</td><td>Pico Pin 36, 3V3</td><td>JP1</td><td>U2 Pad 8</td><td>Versorgung, siehe Abschnitt 6</td><td>rot</td></tr>
+    <tr><td class="check">☐</td><td>Pad 2</td><td>C1 100 nF und C2 10 µF</td><td>Pad 9</td><td>Abblockung am Modul</td><td>—</td></tr>
+    <tr><td class="check">☐</td><td>Pico Pin 38, GND</td><td>direkt</td><td>U2 Pad 9</td><td>Masse</td><td>schwarz</td></tr>
+    <tr><td class="check">☐</td><td>Pico Pin 23, GND</td><td>direkt</td><td>dieselbe Masse</td><td>kurze Signalmasse neben SPI</td><td>schwarz</td></tr>
+    <tr><td class="check">☐</td><td>Pico Pin 22, GP17</td><td>R1 33 Ω</td><td>U2 Pad 1, CS</td><td>Modul → Pico</td><td>orange</td></tr>
+    <tr><td class="check">☐</td><td>CS-Leitung, Modulseite</td><td>R6 10 kΩ</td><td>3,3 V</td><td>Pull-up, Leerlauf High</td><td>—</td></tr>
+    <tr><td class="check">☐</td><td>Pico Pin 26, GP20</td><td>R2 33 Ω</td><td>U2 Pad 3, IRQ</td><td>Pico → Modul</td><td>weiß</td></tr>
+    <tr><td class="check">☐</td><td>IRQ-Leitung, Modulseite</td><td>R7 10 kΩ</td><td>GND</td><td>Pull-down, Leerlauf Low</td><td>—</td></tr>
+    <tr><td class="check">☐</td><td>Pico Pin 21, GP16</td><td>R3 33 Ω</td><td>U2 Pad 5, MOSI</td><td>Modul → Pico</td><td>grün</td></tr>
+    <tr><td class="check">☐</td><td>Pico Pin 24, GP18</td><td>R4 33 Ω</td><td>U2 Pad 7, SCK</td><td>Modul → Pico</td><td>gelb</td></tr>
+    <tr><td class="check">☐</td><td>Pico Pin 25, GP19</td><td>R5 33 Ω</td><td>U2 Pad 10, MISO</td><td>Pico → Modul</td><td>blau</td></tr>
+    <tr><td class="check">☐</td><td>U2 Pad 12, ANT</td><td>Draht</td><td>AE1</td><td>868 MHz</td><td>blank</td></tr>
+  </tbody>
+</table>
+<p>Pad 4 und Pad 6 bleiben offen. Die ICSP-Pads <span class="mono">MCLR</span>, <span class="mono">VDD</span>, <span class="mono">GND</span>, <span class="mono">DAT</span> und <span class="mono">CLK</span> auf dem Modul sind die Programmierschnittstelle des PIC. Sie werden nicht mit dem Pico verbunden. <span class="mono">CLK</span> dort ist nicht SCK.</p>
+
+<h3>Messleiste J1</h3>
+<p>J1 wird auf der Modulseite von R1 bis R5 angeschlossen, also zwischen Widerstand und Modul.</p>
+<table>
+  <thead>
+    <tr><th>Stift</th><th>1</th><th>2</th><th>3</th><th>4</th><th>5</th><th>6</th></tr>
+  </thead>
+  <tbody>
+    <tr><th>Signal</th><td>CS</td><td>IRQ</td><td>MOSI</td><td>SCK</td><td>MISO</td><td>GND</td></tr>
+  </tbody>
+</table>
+
+<h2>5. Modulstecker, Maßstab 2 : 1</h2>
+<p>Die Zeichnung ist doppelt so groß wie der 2,54-mm-Stecker. Der Maßbalken muss auf dem Ausdruck 20 mm lang sein. Ist er kürzer oder länger, erneut mit 100&nbsp;% drucken, ohne „an Seite anpassen“. Pad 1 ist eckig. Obere Reihe von links: 1 CS, 3 IRQ, 5 MOSI, 7 SCK, 9 GND. Untere Reihe: 2 ist 3,3 V, 4 frei, 6 frei, 8 Batterieplus, 10 MISO. Weiter rechts: 11 nur bei Durchgang nach Masse, 12 Antenne. Vor dem Löten die eckige Bohrung am eigenen Modul suchen und mit dieser Zeichnung zur Deckung bringen. Liegt die eckige Bohrung auf der anderen Reihe, die beiden Reihen tauschen und Pad 9 gegen die Modulmasse durchklingeln.</p>
+
+<div class="scale-wrap">
+<svg width="150mm" height="42mm" viewBox="0 0 150 42" xmlns="http://www.w3.org/2000/svg" font-family="Liberation Sans, DejaVu Sans, sans-serif">
+  <!-- 2:1 of 2.54 mm pitch => 5.08 mm per pin. Origin at pad2. -->
+  <g transform="translate(18,8)">
+    <!-- row y=0 (pads 2,4,6,8,10) at svg y=14; row y=2.54 at svg y=14-5.08=8.92 -->
+    <rect x="-4" y="2" width="78" height="22" fill="none" stroke="#111" stroke-width="0.3"/>
+    <!-- square pad 1 -->
+    <rect x="-1.3" y="6.6" width="2.6" height="2.6" fill="#111"/>
+    <circle cx="5.08" cy="7.9" r="1.15" fill="none" stroke="#111" stroke-width="0.35"/>
+    <circle cx="10.16" cy="7.9" r="1.15" fill="none" stroke="#111" stroke-width="0.35"/>
+    <circle cx="15.24" cy="7.9" r="1.15" fill="none" stroke="#111" stroke-width="0.35"/>
+    <circle cx="20.32" cy="7.9" r="1.15" fill="none" stroke="#111" stroke-width="0.35"/>
+    <circle cx="0" cy="14" r="1.15" fill="none" stroke="#111" stroke-width="0.35"/>
+    <circle cx="5.08" cy="14" r="1.15" fill="none" stroke="#111" stroke-width="0.35"/>
+    <circle cx="10.16" cy="14" r="1.15" fill="none" stroke="#111" stroke-width="0.35"/>
+    <circle cx="15.24" cy="14" r="1.15" fill="none" stroke="#111" stroke-width="0.35"/>
+    <circle cx="20.32" cy="14" r="1.15" fill="none" stroke="#111" stroke-width="0.35"/>
+    <!-- antenna pads at 29.4 and 31.94 mm, times 2 -->
+    <circle cx="58.8" cy="14" r="1.15" fill="none" stroke="#111" stroke-width="0.35"/>
+    <circle cx="63.88" cy="14" r="1.15" fill="none" stroke="#111" stroke-width="0.35"/>
+
+    <g font-size="2.6" text-anchor="middle">
+      <text x="0" y="1.6">1</text>
+      <text x="5.08" y="1.6">3</text>
+      <text x="10.16" y="1.6">5</text>
+      <text x="15.24" y="1.6">7</text>
+      <text x="20.32" y="1.6">9</text>
+      <text x="0" y="24.2">2</text>
+      <text x="5.08" y="24.2">4</text>
+      <text x="10.16" y="24.2">6</text>
+      <text x="15.24" y="24.2">8</text>
+      <text x="20.32" y="24.2">10</text>
+      <text x="58.8" y="18.2">11</text>
+      <text x="63.88" y="18.2">12</text>
+    </g>
+  </g>
+  <line x1="18" y1="36" x2="38" y2="36" stroke="#111" stroke-width="0.6"/>
+  <line x1="18" y1="34.5" x2="18" y2="37.5" stroke="#111" stroke-width="0.4"/>
+  <line x1="38" y1="34.5" x2="38" y2="37.5" stroke="#111" stroke-width="0.4"/>
+  <text x="28" y="40.5" text-anchor="middle" font-size="3.2">20 mm, wenn der Druck 100 % ist</text>
+  <text x="100" y="12" font-size="3.4">Raster 2,54 mm, hier zweifach vergrößert.</text>
+  <text x="100" y="17" font-size="3.4">Antennenpads liegen etwa 29 mm neben Pad 2.</text>
+  <text x="100" y="22" font-size="3.4">Quelle der Padfolge: Footprint Tho85:W2-MM.</text>
+</svg>
+</div>
+
+<div class="page"></div>
+
+<h2>6. JP1 und die zwei Modulvarianten</h2>
+<p>Pad 2 ist die Logikversorgung und liegt immer an 3,3 V des Pico. Pad 8 ist der Batteriepluspol. JP1 verbindet Pad 8 mit derselben 3,3-V-Schiene.</p>
+<table>
+  <thead>
+    <tr><th>Modul</th><th>Woran zu erkennen</th><th>JP1</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Rot, aus Blitzleuchte W2-SVP-630 / CP-LED</td>
+      <td>Keine Lithiumzelle. Das Gerät hat das Modul mit 3,3 V versorgt.</td>
+      <td>geschlossen</td>
+    </tr>
+    <tr>
+      <td>Schwarz, Zelle ausgelötet</td>
+      <td>Zelle entfernt und ihr Pluspol mit Pad 8 verbunden. So von C19HOP geprüft.</td>
+      <td>geschlossen</td>
+    </tr>
+    <tr>
+      <td>Schwarz, Zelle bleibt eingebaut</td>
+      <td>Fest verbaute 3-V-Lithiumzelle bleibt die Versorgung des Moduls.</td>
+      <td>offen</td>
+    </tr>
+  </tbody>
+</table>
+<div class="banner">
+  <strong>JP1 bleibt offen, solange eine Lithiumzelle eingebaut ist.</strong>
+  Eine geschlossene Brücke legt die Zelle parallel an den 3,3-V-Regler des Pico. Das gilt auch für den ersten Probebetrieb.
+</div>
+<p>Der Strom des Moduls liegt beim Senden um 30 mA, beim Empfang um 20 mA. Der 3V3-Pin des Pico darf extern bis 300 mA liefern. Die Versorgung aus Pin 36 ist dafür ausgelegt. Eine externe 5-V-Quelle, falls später nötig, kommt an Pin 39 (VSYS), niemals an Pin 36.</p>
+
+<h2>7. Antenne und Aufstellung</h2>
+<ul>
+  <li>Viertelwelle 86 mm oder Halbwelle 173 mm, gerechnet für 868 MHz. Die Länge zählt ab dem Antennenpad.</li>
+  <li>Der Draht steht senkrecht und frei. Er liegt nicht über der Pico-Platine.</li>
+  <li>Die 2,4-GHz-Antenne des Pico 2 W sitzt an der Kante gegenüber dem USB-Stecker. Die Aussparung dort ist 14 mm × 9 mm und bleibt frei von Metall, Massefläche und Draht.</li>
+  <li>Das Gehäuse der Brücke ist kein geschlossener Metallkasten.</li>
+  <li>Pad 11 nur dann an GND legen, wenn es am unversorgten Modul Durchgang zu Pad 9 hat. Sonst offen lassen.</li>
+</ul>
+
+<h2>8. Reihenfolge</h2>
+<table>
+  <thead>
+    <tr><th class="check">✓</th><th>Schritt</th></tr>
+  </thead>
+  <tbody>
+    <tr><td class="check">☐</td><td>Pico vom USB trennen. Modul nicht versorgen.</td></tr>
+    <tr><td class="check">☐</td><td>Pad 1 am Modul finden (eckiges Pad) und mit Abschnitt 5 vergleichen. Pad 9 muss Durchgang zur Modulmasse haben.</td></tr>
+    <tr><td class="check">☐</td><td>Verdrahten nach Abschnitt 4. JP1 in der Stellung aus Abschnitt 6 vorbereiten. Die 3,3-V-Leitung zum Modul bleibt bis nach dem nächsten Schritt offen.</td></tr>
+    <tr><td class="check">☐</td><td>Unversorgt auf Kurzschluss prüfen: 3,3 V gegen GND darf nicht durchklingeln. CS, IRQ, MOSI, SCK und MISO dürfen untereinander und gegen 3,3 V und GND nicht durchklingeln. Der 10-kΩ-Pull-up und der 10-kΩ-Pull-down zeigen dabei einen hohen Widerstand, keinen Kurzschluss.</td></tr>
+    <tr><td class="check">☐</td><td>Pico allein per USB starten und die aktuelle Firmware per OTA einspielen. Im Log steht <span class="mono">SPI-Slave gestartet</span>. Die Webseite <span class="mono">http://wisafe2-pico.local/</span> antwortet weiter. IRQ (GP20) ist dann Ausgang und Low.</td></tr>
+    <tr><td class="check">☐</td><td>Erst danach die 3,3-V-Leitung zum Modul schließen. Vor dieser Firmware kann ein freier MISO-Pin das Modul beim Hochlauf mit Zufallsdaten füttern.</td></tr>
+  </tbody>
+</table>
+
+<h2>9. Was die Firmware elektrisch tut</h2>
+<ul>
+  <li>SPI-Slave auf Hardware-SPI0, Modus 0, MSB zuerst. Die Schleife läuft auf Kern 1 und liegt im RAM.</li>
+  <li>GP16 Empfang (MOSI des Moduls), GP19 Senden (MISO des Moduls), GP18 Takt, GP17 Chip-Select, GP20 IRQ.</li>
+  <li>Chip-Select ist aktiv Low und rahmt jedes einzelne Byte. IRQ liegt in Ruhe auf Low. Ein empfangenes Byte wird mit einem High-Puls von 8 µs auf IRQ quittiert. MISO gibt dabei <span class="mono">0x00</span> aus.</li>
+  <li>Befehle an das Modul werden noch nicht gesendet. Der Init-Befehl <span class="mono">D3 19 50 00 7E</span> und die erwartete Antwort <span class="mono">46 7E</span> folgen später. Bis dahin kann das Modul stumm bleiben.</li>
+  <li>Die eingebaute ESPHome-Komponente <span class="mono">spi:</span> ist nur ein Master und wird nicht eingetragen.</li>
+</ul>
+
+<h2>10. Quellen der Padfolge und der Pegel</h2>
+<ul>
+  <li>Tho85/ws2mqtt, Footprint <span class="mono">Tho85:W2-MM</span> und Schaltplan: Padnummern, direkte 3,3-V-Verbindung ohne Pegelwandler, Lötbrücke „Module power“ an Pad 8.</li>
+  <li>C19HOP/WiSafe2-to-HomeAssistant-Bridge: Modul ist SPI-Master, IRQ im Ruhezustand Low, 5-V-Nano nur mit Pegelwandler. Für diesen Aufbau entfällt der Wandler, weil der Pico 2 W auf 3,3 V liegt.</li>
+  <li>NikNakk/fireangel-pro-connected-esphome: beide 3,3-V-Pads an dieselbe 3,3-V-Quelle, MOSI vom Modul zum Host, MISO vom Host zum Modul.</li>
+  <li>pimvanoerle/fireangle: rote Spenderplatine W2-SVP-630L, Si4431 plus PIC16LF1936, Antennenlängen, Warnung vor den ICSP-Pads.</li>
+  <li>Raspberry Pi Pico 2 W Datasheet: Pin 36 ist 3V3-Ausgang, externe Last unter 300 mA, GPIO23/24/25/29 gehören dem CYW43439, Antennenaussparung an der unteren Kante.</li>
+</ul>
+
+<p class="foot">Revision 2 · 7. Oktober 2026 · Zum Ausdruck auf A4, Skalierung 100 %. Der 20-mm-Balken in Abschnitt 5 ist die Kontrolle dafür.</p>
+
+</body>
+</html>
