@@ -2,6 +2,8 @@
 
 ESPHome-External-Component für die WiSafe2-Brücke auf einem Raspberry Pi Pico 2 W.
 
+Der Schaltplan liegt unter [doc/WiSafe2-Pico2W-Hardware.md](doc/WiSafe2-Pico2W-Hardware.md). Dieselbe Unterlage zum Ausdrucken gibt es als [HTML](doc/WiSafe2-Pico2W-Hardware.html).
+
 Der Ordner `components/wisafe2` wird vom ESPHome Device Builder per `external_components` geladen. Die Komponente meldet den Status `bereit`.
 
 Kern 1 ist SPI-Slave am Funkmodul und hört zu. Das Modul ist SPI-Master: es taktet jedes Byte einzeln. Nach jedem Byte zieht Kern 1 IRQ für 8 µs hoch, sonst kommt das nächste Byte nicht. Auf MISO liegt dabei `0x00`. Es wird kein Befehl gesendet.
