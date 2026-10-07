@@ -1,16 +1,34 @@
 # wisafe2-pico-esphome-component
 
-ESPHome-External-Component für die WiSafe2-Brücke auf einem Raspberry Pi Pico 2 W.
+**WIP.** ESPHome-External-Component für eine WiSafe2-Brücke auf dem Raspberry Pi Pico 2 W.
 
-Der Schaltplan liegt unter [doc/WiSafe2-Pico2W-Hardware.md](doc/WiSafe2-Pico2W-Hardware.md). Dieselbe Unterlage zum Ausdrucken gibt es als [HTML](doc/WiSafe2-Pico2W-Hardware.html).
+Die zertifizierten Melder bleiben die Sicherheitsanlage. Diese Brücke hört im 868-MHz-Netz mit und ist kein Ersatz für die Melder.
 
-Der Ordner `components/wisafe2` wird vom ESPHome Device Builder per `external_components` geladen. Die Komponente meldet den Status `bereit`.
+## Stand
 
-Kern 1 ist SPI-Slave am Funkmodul und hört zu. Das Modul ist SPI-Master: es taktet jedes Byte einzeln. Nach jedem Byte zieht Kern 1 IRQ für 8 µs hoch, sonst kommt das nächste Byte nicht. Auf MISO liegt dabei `0x00`. Es wird kein Befehl gesendet.
+Die Komponente empfängt. Sie sendet noch keine Befehle an das Funkmodul.
 
-Die Bytes laufen über die Warteschlange nach Kern 0. Dort werden Rahmen bis `7E` erkannt. Bekannte Typen (`70` Test, `71` Sockel, `50` Alarm, `61` Stille, `D2` fehlendes Gerät, `41`/`46` Antwort, `D4` Kopplung) erscheinen als Text im Log. Alles andere erscheint als `Roh:` mit Hex-Bytes.
+Kern 1 ist SPI-Slave, legt IRQ beim Start auf Low und quittiert jedes empfangene Byte mit einem IRQ-Puls von 8 µs. Auf MISO liegt dabei `0x00`. Die Bytes gehen über eine Warteschlange nach Kern 0. Dort werden Rahmen bis `7E` erkannt und ins Log geschrieben.
 
-`core1_log` bleibt für Fehler auf Kern 1, zum Beispiel eine volle Warteschlange oder einen SPI-Überlauf.
+Der spätere Init-Befehl ist `D3 19 50 00 7E`, die erwartete Antwort `46 7E`. Ohne diesen Befehl kann das Modul stumm bleiben. Der erste erwartete Verkehr ist eine Testtaste an einem bereits gekoppelten Melder.
+
+## Hardware
+
+Schaltplan und Aufbau: [doc/WiSafe2-Pico2W-Hardware.md](doc/WiSafe2-Pico2W-Hardware.md), druckbar als [HTML](doc/WiSafe2-Pico2W-Hardware.html).
+
+| Signal | Pico | Modulpad |
+| --- | --- | --- |
+| MOSI, Modul → Pico | GP16, Pin 21 | 5 |
+| CS | GP17, Pin 22 | 1 |
+| SCK | GP18, Pin 24 | 7 |
+| MISO, Pico → Modul | GP19, Pin 25 | 10 |
+| IRQ, Pico → Modul | GP20, Pin 26 | 3 |
+| 3,3 V | Pin 36 | 2 |
+| GND | Pin 38 und 23 | 9 |
+
+3,3 V zum Modul erst anlegen, wenn die Firmware läuft und IRQ als Ausgang auf Low liegt. JP1 bleibt offen, solange die Lithiumzelle im Modul steckt.
+
+## ESPHome
 
 ```yaml
 external_components:
@@ -23,20 +41,10 @@ wisafe2:
     name: "WiSafe2 Status"
 ```
 
-Ein Eintrag `blink:` gehört nicht mehr in die YAML.
+Der Ordner `components/wisafe2` wird darüber geladen. Der Status-Sensor meldet `bereit`.
 
-## Anschlüsse
+## Log
 
-| Signal | Pico | Modulpad |
-| --- | --- | --- |
-| MOSI, Modul → Pico | GP16, Pin 21 | 5 |
-| CS | GP17, Pin 22 | 1 |
-| SCK | GP18, Pin 24 | 7 |
-| MISO, Pico → Modul | GP19, Pin 25 | 10 |
-| IRQ, Pico → Modul | GP20, Pin 26 | 3 |
-| 3,3 V | Pin 36 | 2 |
-| GND | Pin 38 und 23 | 9 |
+Bekannte Rahmen erscheinen als Text: `70` Test, `71` Sockel, `50` Alarm, `61` Stille, `D2` fehlendes Gerät, `41` und `46` Antwort, `D4` Kopplung. Alles andere erscheint als `Roh:` mit Hex-Bytes.
 
-Die Firmware legt IRQ als Ausgang auf low, sobald Kern 1 startet. 3,3 V zum Modul erst danach anlegen. JP1 bleibt offen, solange die Lithiumzelle im Modul steckt.
-
-Ohne den späteren Init-Befehl `D3 19 50 00 7E` kann das Modul stumm bleiben. Eine Testtaste an einem bereits gekoppelten Melder ist der erste erwartete Verkehr.
+Fehler auf Kern 1, etwa eine volle Warteschlange oder ein SPI-Überlauf, kommen über `core1_log` ins selbe Log.
