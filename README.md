@@ -2,21 +2,13 @@
 
 ESPHome-External-Component für die WiSafe2-Brücke auf einem Raspberry Pi Pico 2 W.
 
-Der Ordner `components/wisafe2` wird vom ESPHome Device Builder per `external_components` geladen. Die Komponente meldet den Status `bereit`. SPI folgt später.
+Der Ordner `components/wisafe2` wird vom ESPHome Device Builder per `external_components` geladen. Die Komponente meldet den Status `bereit`.
 
-Kern 1 läuft über `setup1` und `loop1` mit eigenem Stack. Die Onboard-LED hängt am WLAN-Chip, deshalb schreibt Kern 1 sie über `digitalWrite(PIN_LED)`.
+Kern 1 ist SPI-Slave am Funkmodul und hört zu. Das Modul ist SPI-Master: es taktet jedes Byte einzeln. Nach jedem Byte zieht Kern 1 IRQ für 8 µs hoch, sonst kommt das nächste Byte nicht. Auf MISO liegt dabei `0x00`. Es wird kein Befehl gesendet.
 
-## Schalter und Log
+Die Bytes laufen über die Warteschlange nach Kern 0. Dort werden Rahmen bis `7E` erkannt. Bekannte Typen (`70` Test, `71` Sockel, `50` Alarm, `61` Stille, `D2` fehlendes Gerät, `41`/`46` Antwort, `D4` Kopplung) erscheinen als Text im Log. Alles andere erscheint als `Roh:` mit Hex-Bytes.
 
-Der Schalter **LED Blinken** erscheint auf der lokalen Webseite. Nach dem Start steht er auf ein, die LED blinkt.
-
-Kern 0 legt jeden Wechsel in eine Warteschlange. Kern 1 liest sie in `loop1`, schaltet das Blinken und ruft `core1_log` auf. Kern 0 holt die Zeile in `loop()` ab und schreibt sie mit `ESP_LOGI` in den ESPHome-Logger. Dort erscheint zum Beispiel:
-
-```text
-[wisafe2] Kern 1: Schalter umgelegt, Blinken aus
-```
-
-Die Warteschlange hat einen Schreiber und einen Leser und nimmt keine Sperre. Ein Kern wartet nicht auf den anderen.
+`core1_log` bleibt für Fehler auf Kern 1, zum Beispiel eine volle Warteschlange oder einen SPI-Überlauf.
 
 ```yaml
 external_components:
@@ -27,12 +19,22 @@ external_components:
 wisafe2:
   status:
     name: "WiSafe2 Status"
-  blink:
-    name: "LED Blinken"
 ```
 
-`blink` ist optional. Ohne den Eintrag heißt der Schalter ebenfalls `LED Blinken`.
+Ein Eintrag `blink:` gehört nicht mehr in die YAML.
 
-Die `output`- und `light`-Sektion für `pin: LED` bleibt aus der YAML draußen. Sonst schreibt ESPHome denselben Pin.
+## Anschlüsse
 
-Das Funkmodul bleibt stromlos, solange die Komponente die SPI-Pins nicht treibt.
+| Signal | Pico | Modulpad |
+| --- | --- | --- |
+| MOSI, Modul → Pico | GP16, Pin 21 | 5 |
+| CS | GP17, Pin 22 | 1 |
+| SCK | GP18, Pin 24 | 7 |
+| MISO, Pico → Modul | GP19, Pin 25 | 10 |
+| IRQ, Pico → Modul | GP20, Pin 26 | 3 |
+| 3,3 V | Pin 36 | 2 |
+| GND | Pin 38 und 23 | 9 |
+
+Die Firmware legt IRQ als Ausgang auf low, sobald Kern 1 startet. 3,3 V zum Modul erst danach anlegen. JP1 bleibt offen, solange die Lithiumzelle im Modul steckt.
+
+Ohne den späteren Init-Befehl `D3 19 50 00 7E` kann das Modul stumm bleiben. Eine Testtaste an einem bereits gekoppelten Melder ist der erste erwartete Verkehr.
