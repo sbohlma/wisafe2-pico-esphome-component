@@ -304,14 +304,15 @@ void spi_slave_setup() {
 
 bool core1_separate_stack = true;
 
-void setup1() {
+// arduino-pico startet Kern 1 nur, wenn es setup1/loop1 unter ihrem C-Namen findet.
+extern "C" void setup1() {
   spi_slave_setup();
   init_phase = InitPhase::Settle;
   init_mark_us = timer_hw->timerawl;
   init_attempt = 0;
 }
 
-void __not_in_flash_func(loop1)() {
+extern "C" void __not_in_flash_func(loop1)() {
   if (init_phase != InitPhase::Sending &&
       esphome::wisafe2::ipc::spi_setup_requested.exchange(false, std::memory_order_acquire)) {
     spi_slave_setup();
