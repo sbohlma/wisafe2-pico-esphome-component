@@ -116,12 +116,14 @@ void WiSafe2Component::handle_completion_(const Completion &completion) {
       break;
     case TAG_RM_STATUS:
       if (completion.outcome != Outcome::Ok) {
-        ESP_LOGW(TAG, "D1 (RM-Status): %s", outcome_name(completion.outcome));
+        ESP_LOGW(TAG, "D1 (RM-Status): %s nach %u Sendeversuch(en)", outcome_name(completion.outcome),
+                 static_cast<unsigned>(completion.request.send_attempts));
       }
       break;
     case TAG_SID_MAP:
       if (completion.outcome != Outcome::Ok) {
-        ESP_LOGW(TAG, "D3 03 (SID-Map): %s", outcome_name(completion.outcome));
+        ESP_LOGW(TAG, "D3 03 (SID-Map): %s nach %u Sendeversuch(en)", outcome_name(completion.outcome),
+                 static_cast<unsigned>(completion.request.send_attempts));
       }
       break;
     default:
@@ -166,10 +168,13 @@ void WiSafe2Component::loop() {
   uint32_t now = millis();
   ipc::CommandResult result{};
   while (ipc::poll_command_result(result)) {
-    if (!result.ok) {
-      ESP_LOGW(TAG, "Kern 1: Befehl nach %u Bytes abgebrochen", static_cast<unsigned>(result.sent));
+    if (!result.ok && result.sent == 0) {
+      ESP_LOGD(TAG, "Kern 1: Modul nimmt kein Byte an (%s)", ipc::send_error_name(result.error));
+    } else if (!result.ok) {
+      ESP_LOGW(TAG, "Kern 1: Befehl nach %u Bytes abgebrochen (%s)", static_cast<unsigned>(result.sent),
+               ipc::send_error_name(result.error));
     }
-    this->scheduler_.on_send_result(result.id, result.ok, now);
+    this->scheduler_.on_send_result(result.id, result.ok, result.sent, now);
   }
 
   Frame frame;

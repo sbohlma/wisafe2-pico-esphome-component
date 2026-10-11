@@ -97,10 +97,27 @@ void Scheduler::clear() {
   this->queue_count_ = 0;
   this->phase_ = Phase::Idle;
   this->remote_open_ = false;
+  this->hold_ = false;
+}
+
+bool Scheduler::requeue_front_(const Request &request) {
+  const bool host = request.kind == RequestKind::HostReply;
+  Request *queue = host ? this->host_queue_ : this->queue_;
+  size_t &count = host ? this->host_count_ : this->queue_count_;
+  if (count >= (host ? HOST_QUEUE : QUEUE)) {
+    return false;
+  }
+  for (size_t index = count; index > 0; --index) {
+    queue[index] = queue[index - 1];
+  }
+  queue[0] = request;
+  count++;
+  return true;
 }
 
 void Scheduler::start_(const Request &request, uint32_t now_ms) {
   this->active_ = request;
+  this->active_.send_attempts++;
   this->early_ack_ = EarlyAck::None;
   uint8_t encoded[MAX_ENCODED];
   const size_t len = encode_frame(request.payload, request.len, encoded, sizeof(encoded));
@@ -141,13 +158,21 @@ void Scheduler::finish_remote_(Outcome outcome, const Frame *reply) {
   }
 }
 
-void Scheduler::on_send_result(uint8_t id, bool ok, uint32_t now_ms) {
+void Scheduler::on_send_result(uint8_t id, bool ok, uint8_t sent, uint32_t now_ms) {
   if (this->phase_ != Phase::Sending || id != this->active_id_) {
     return;
   }
   this->any_activity_ = true;
   this->last_activity_ms_ = now_ms;
   if (!ok) {
+    // Ohne abgesetztes Byte hat das Modul nichts gesehen, eine Wiederholung ist unbedenklich.
+    if (sent == 0 && this->active_.send_attempts < SEND_ATTEMPTS && this->early_ack_ == EarlyAck::None &&
+        this->requeue_front_(this->active_)) {
+      this->phase_ = Phase::Idle;
+      this->hold_ = true;
+      this->hold_until_ms_ = now_ms + SEND_RETRY_DELAY_MS;
+      return;
+    }
     this->finish_active_(Outcome::SendFailed, nullptr);
     return;
   }
@@ -230,6 +255,12 @@ void Scheduler::service(uint32_t now_ms, bool receiving) {
 
   if (this->phase_ != Phase::Idle || receiving) {
     return;
+  }
+  if (this->hold_) {
+    if (static_cast<int32_t>(now_ms - this->hold_until_ms_) < 0) {
+      return;
+    }
+    this->hold_ = false;
   }
   if (this->host_count_ != 0) {
     const Request request = this->host_queue_[0];

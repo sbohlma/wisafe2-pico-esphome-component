@@ -23,6 +23,10 @@ static constexpr uint32_t LOCAL_REPLY_TIMEOUT_MS = 500;
 static constexpr uint32_t REMOTE_REPLY_TIMEOUT_MS = 55000;
 // Kern 1 meldet das Ende eines Befehls; bleibt die Meldung aus, gilt der Befehl als nicht gesendet.
 static constexpr uint32_t SEND_TIMEOUT_MS = 1000;
+// Nach dem Init nimmt das Modul einige Sekunden lang keine Bytes an. Ein Befehl, von dem noch kein Byte
+// hinausging, wird deshalb wiederholt: bis zu 20 Versuche im Abstand von mindestens 500 ms.
+static constexpr uint8_t SEND_ATTEMPTS = 20;
+static constexpr uint32_t SEND_RETRY_DELAY_MS = 500;
 
 enum class RequestKind : uint8_t {
   HostReply,  // Antwort an das RM, etwa 91 auf 41; sofort, vor allen anderen
@@ -50,6 +54,7 @@ struct Request {
   uint8_t reply_len{0};
   uint8_t reply_prefix[3]{};
   uint32_t reply_timeout_ms{0};
+  uint8_t send_attempts{0};
 
   static Request host_reply(uint8_t tag, const uint8_t *payload, size_t len, bool expects_ack);
   static Request local(uint8_t tag, const uint8_t *payload, size_t len, const uint8_t *reply_prefix,
@@ -87,7 +92,8 @@ class Scheduler {
   void set_handler(Handler handler) { this->handler_ = std::move(handler); }
   // false, wenn die Warteschlange voll oder der Inhalt zu lang ist.
   bool enqueue(const Request &request);
-  void on_send_result(uint8_t id, bool ok, uint32_t now_ms);
+  // sent: Anzahl der Bytes, die Kern 1 abgesetzt hat.
+  void on_send_result(uint8_t id, bool ok, uint8_t sent, uint32_t now_ms);
   // true, wenn der Rahmen eine offene Anfrage quittiert oder beantwortet.
   bool on_frame(const Frame &frame, uint32_t now_ms);
   // receiving: ein Rahmen vom RM ist gerade angefangen; dann startet kein Befehl.
@@ -107,6 +113,7 @@ class Scheduler {
   static constexpr size_t QUEUE = 8;
 
   void start_(const Request &request, uint32_t now_ms);
+  bool requeue_front_(const Request &request);
   void acknowledged_(uint32_t now_ms);
   void finish_active_(Outcome outcome, const Frame *reply);
   void finish_remote_(Outcome outcome, const Frame *reply);
@@ -131,6 +138,9 @@ class Scheduler {
 
   bool any_activity_{false};
   uint32_t last_activity_ms_{0};
+
+  bool hold_{false};
+  uint32_t hold_until_ms_{0};
 };
 
 }  // namespace wisafe2
