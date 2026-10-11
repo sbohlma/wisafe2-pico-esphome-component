@@ -1,12 +1,12 @@
 # Umsetzungsplan: W2-Modulprotokoll auf der Pico-2-W-Brücke
 
-Stand: 11.10.2026, Entscheidungen E1–E12 getroffen, E3 und E7 überarbeitet, Stufe 0 im Code umgesetzt. Grundlage ist [PROTOCOL_ANALYSIS_W2_MODULE.md](https://github.com/sbohlma/FireAngel/blob/main/wisafe-mm/docs/PROTOCOL_ANALYSIS_W2_MODULE.md) (im Folgenden „Protokollanalyse“) mit den dort genannten Quellen, vor allem NikNakks [fireangel-pro-connected-esphome](https://github.com/NikNakk/fireangel-pro-connected-esphome), Tho85s [ws2mqtt](https://github.com/Tho85/ws2mqtt) und [wisafe-mm](https://github.com/sbohlma/FireAngel/tree/main/wisafe-mm).
+Stand: 12.10.2026, Entscheidungen E1–E12 getroffen, E3 und E7 überarbeitet, Stufe 0 umgesetzt und auf der Hardware abgenommen, Init-Sequenz korrigiert (Abschnitt 9). Grundlage ist [PROTOCOL_ANALYSIS_W2_MODULE.md](https://github.com/sbohlma/FireAngel/blob/main/wisafe-mm/docs/PROTOCOL_ANALYSIS_W2_MODULE.md) (im Folgenden „Protokollanalyse“) mit den dort genannten Quellen, vor allem NikNakks [fireangel-pro-connected-esphome](https://github.com/NikNakk/fireangel-pro-connected-esphome), Tho85s [ws2mqtt](https://github.com/Tho85/ws2mqtt) und [wisafe-mm](https://github.com/sbohlma/FireAngel/tree/main/wisafe-mm).
 
 Ziel: Alle Melder im Netz erscheinen in ESPHome und Home Assistant mit Zustand, Fehlern, Batterie und Ereignissen. Diagnose und Netztest stehen als Funktionen bereit.
 
 **Sicherheitsrahmen.** Die zertifizierten Melder bleiben die Sicherheitsanlage. Die Brücke ist ein zusätzlicher Beobachter und darf nie der einzige Alarmweg sein. Auslösende Funktionen sind auf Diagnose und Netztest begrenzt (E1), netzverändernde Befehle bleiben ausgeschlossen (E10).
 
-Kennzeichnung: **[E1]** usw. verweist auf eine Entscheidung in Abschnitt 6, **[R1]** usw. auf ein Risiko in Abschnitt 7.
+Kennzeichnung: **[E1]** usw. verweist auf eine Entscheidung in Abschnitt 6, **[R1]** usw. auf ein Risiko in Abschnitt 7, P1 usw. auf eine Protokoll-Erkenntnis in Abschnitt 9.
 
 ## 1. Ausgangslage
 
@@ -14,7 +14,7 @@ Funktioniert und ist auf der Hardware bestätigt:
 
 - Kern 1 ist SPI-Slave mit IRQ-Quittung, sendet Befehle aus einer Warteschlange und meldet pro Befehl ein Ergebnis.
 - Kern 0 startet nach dem WLAN-Aufbau das SPI und den Init `D3 19 50 00 7E`, erkennt `46 7E` und loggt Rahmen.
-- Beobachtet nach dem Init: `D4 10 BF 7F 0E 05 00 00 00 00 14 7E`.
+- Beobachtet nach dem Init: `D4 10 BF 7F 0E 05 00 00 00 00 14 7E` (Deutung in Abschnitt 9, P2 und P3).
 
 Abweichungen des Ist-Stands von der Protokollanalyse, die Stufe 0 und 1 beheben:
 
@@ -58,20 +58,25 @@ Jede Stufe endet mit einem lauffähigen Stand, Host-Tests und einer Prüfung auf
 
 ### Stufe 0: Rahmenschicht und Sendeplanung
 
-Stand: im Code umgesetzt (`framing`, `messages`, `scheduler`, Host-Tests unter `tests/host`). Die Abnahme auf der Hardware steht aus.
+Stand: umgesetzt (`framing`, `messages`, `scheduler`, Host-Tests unter `tests/host`) und am 12.10.2026 auf der Hardware abgenommen.
 
 Ziel: Rahmen werden korrekt erkannt und gesendet, Befehle laufen im richtigen Takt.
 
 - Rahmenschicht mit Demaskierung, Verwerfen führender `00`, Zeitlimit 100 ms und Maskierung beim Senden **[E11]**.
 - Typisierte Nachrichten für die lokalen Antworten `46`, `47`, `41`, `D2`, `D4 xx`.
 - Sendeplanung mit den drei Klassen aus Abschnitt 2. Der Init läuft als erster Befehl über sie, ohne vorangestellte `00` **[E2]**.
+- Init-Sequenz, korrigiert nach der Hardware-Abnahme (Abschnitt 9, P1):
+  1. `D3 19 50 00 7E` senden, `46` abwarten.
+  2. Auf `D4 10 …` warten, höchstens 10 s. Bis dahin nimmt das Modul keine Bytes vom Host an. Bleibt `D4 10` aus, folgt eine Warnung im Log und die Abfrage trotzdem.
+  3. Erst dann `D1` und `D3 03`.
+- Nimmt das Modul kein einziges Byte eines Befehls an, wiederholt die Sendeplanung ihn bis zu 20-mal im Abstand von mindestens 500 ms. Kern 1 meldet dazu den Grund („CS belegt“, „Modul taktet nicht“, „Byte unvollständig“).
 - Der Status-Sensor zeigt den Zustand des Moduls: „Init läuft“, „Modul bereit“, „keine Antwort“, „ungekoppelt“.
 - Host-Tests für Rahmen und Sendeplanung, darunter maskierte Rahmen und Antworten, die sich überholen.
 
-Abnahme auf der Hardware:
+Abnahme auf der Hardware (erledigt am 12.10.2026):
 
-- Init wie bisher, danach `D1` und `D3 03` per Button ohne verlorene Antwort.
-- Mitschnitt nach einem Neustart: Flutet der Init der Pico-Brücke das Netz (`D3 19 50 00 sid` bei anderen Knoten)? Ergebnis wird in E2 nachgetragen.
+- Init mit Quittung `46`, danach `D4 10`, dann `D1` und `D3 03` automatisch und per Button jeweils im ersten Versuch beantwortet. Erfüllt.
+- Mitschnitt nach einem Neustart: Flutet der Init der Pico-Brücke das Netz? Indirekt belegt: Der Init löst eine Netzrunde aus, `D4 10` meldet die antwortenden Knoten (Abschnitt 9, P3 und P5). In E2 nachgetragen. Ein Mitschnitt an einem zweiten Knoten folgt bei den Tests von Stufe 2 **[R9]**.
 
 ### Stufe 1: Vollständiges Parsing, Identität und manuelle Abfragen
 
@@ -246,7 +251,7 @@ Ein späterer Assistent bekommt eine eigene Absicherung und eine eigene Planung,
 ## 4. Querschnittsthemen
 
 - **Host-Tests:** Jede Stufe erweitert die Tests auf dem PC. Testdaten sind die Beispielrahmen der Protokollanalyse und Mitschnitte aus dem eigenen Netz. Vorschlag: zusätzlich eine GitHub Action, die die Tests und einen ESPHome-Build ausführt.
-- **Mitschnitte:** Optional ein Debug-Schalter, der jeden Rohrahmen mit Zeitstempel loggt. Er hilft bei offenen Punkten wie `D4 10` und `D5`.
+- **Mitschnitte:** Optional ein Debug-Schalter, der jeden Rohrahmen mit Zeitstempel loggt. Er hilft bei offenen Punkten wie `D5` und der Bestätigung von `D4 10` (P3). Neue Befunde werden in Abschnitt 9 gesammelt.
 - **Dateisystem:** Für `nodes.bin` braucht der Pico ein LittleFS im Flash. Die Größe wird in der YAML über `platformio_options` festgelegt; die kleinste Stufe reicht.
 - **Speicher:** Das Register mit 50 Plätzen braucht wenige KB. Entitäten für 22 Melder mit je ~13 Einträgen sind rund 290 Entitäten. Ob das mit der ESPHome-API auf dem RP2350 flüssig läuft, wird in Stufe 3 gemessen **[R6]**.
 - **Dokumentation:** README und Hardware-Unterlage wachsen mit jeder Stufe.
@@ -262,14 +267,14 @@ Getroffen am 11.10.2026.
 | Nr. | Frage | Entscheidung |
 | --- | --- | --- |
 | E1 | Welche aktiven Funktionen bietet die Brücke an? | Diagnose (`C1`) und Netztest (`70`), per YAML einzeln zuschaltbar, direkt auslösbar. Alarm auslösen, Stummschalten und Alarm beenden werden nicht angeboten |
-| E2 | Init `D3 19 50 00` bei jedem Start? | Ja, ohne vorangestellte `00`. Beim nächsten Start wird mitgeschnitten, ob das Netz geflutet wird |
+| E2 | Init `D3 19 50 00` bei jedem Start? | Ja, ohne vorangestellte `00`. Nachtrag 12.10.2026: Nach `46` wartet die Brücke auf `D4 10`, erst dann folgen weitere Befehle (P1). Der Init löst eine Netzrunde aus, an der die Knoten mit einer Antwort teilnehmen (P3, P5). Der direkte Mitschnitt an einem zweiten Knoten folgt in Stufe 2 |
 | E3 | Identität der Brücke (`91` auf `41`)? | Geräte-ID fest in der YAML, hier `14B8A5` (die ID, die das Modul am Pico bereits aus dem Pairing trägt). Klasse `FF`, jedes `41` beantworten. Modell per YAML, Vorgabe `11 03` (wie Arduino-Firmware und NikNakk) |
 | E4 | Antworten auf Anfragen an die eigene Geräte-ID? | Alle beantworten: `C3`→`C4`, `72`→`73`, `C7`→`C8`, `C5`→`C6`, `C1`→`C2`, mit festen Werten (keine Fehler, 3000 mV, keine Ereignisse, Diagnose bestanden) |
 | E5 | Wie oft werden Melder aus der Ferne abgefragt? | Zielbetrieb: Erkundung beim Start, `D3 06` je SID alle 19 h, `C7` je Melder alle 24 h, ereignisgesteuerte Abfragen. In Entwicklung und Test nur beim Start und auf Knopfdruck. Umschaltung über YAML `auto_discovery` |
 | E6 | Wie werden die Melder zu Entitäten? | Melder in der YAML auflisten, Vorlage aus dem Log, dazu das Register als JSON-Text-Sensor. Alles über die native API |
 | E7 | Melderregister speichern? | Ja, als Binärdatei `nodes.bin` mit festen 50 Plätzen (408 Byte), nur bei Änderung, gebündelt. Button „Rediscover Network“ löscht das Register und erkundet neu |
 | E8 | Wann gilt ein Knoten als nicht erreichbar? | Nach `D4 01` oder zwei ausbleibenden Antworten in Folge. Entfernen nur über „Rediscover Network“ |
-| E9 | Unbekannter Rahmen `D4 10 BF 7F 0E 05 00 00 00 00 14`? | Weiter mitschneiden, roh loggen, Auswertung erst bei geklärter Bedeutung |
+| E9 | Unbekannter Rahmen `D4 10 BF 7F 0E 05 00 00 00 00 14`? | Weiter mitschneiden, roh loggen, Auswertung erst bei geklärter Bedeutung. Nachtrag 12.10.2026: Format und wahrscheinliche Bedeutung in P2 und P3. Die Brücke nutzt `D4 10` als Bereitschaftssignal nach dem Init (P1) |
 | E10 | Netzverändernde Befehle? | Vorerst ausgeschlossen. Ein Pairing-Assistent ist als Stufe 5 vorgemerkt |
 | E11 | Beim Senden maskieren? | Ja. Bei SIDs oder IDs mit `7D`/`7E` wird gezielt geprüft |
 | E12 | Modell `11 04`? | WHT-630. Der FP1720W2-R ist ein Kit, das den WHT-630 mit Funkmodul enthält |
@@ -293,4 +298,77 @@ Getroffen am 11.10.2026.
 
 ## 8. Nächster Schritt
 
-Hardware-Abnahme von Stufe 0: Init mit Quittung, Buttons „RM-Status lesen“ (`D1`) und „SID-Map lesen“ (`D3 03`) ohne verlorene Antwort, dazu der Mitschnitt zur Flutung beim Init. Danach folgt Stufe 1.
+Stufe 1 nach Freigabe: vollständiges Parsing, Identität und manuelle Abfragen.
+
+## 9. Neue Erkenntnisse zum Protokoll
+
+Dieser Abschnitt sammelt Befunde aus dem eigenen Netz, die in der Protokollanalyse noch fehlen oder sie präzisieren. Er dient als Vorlage, um die Protokollanalyse später zu ergänzen. Jeder Eintrag nennt Beleg und Sicherheit: „bestätigt“ heißt mehrfach reproduziert, „vermutet“ heißt schlüssig gedeutet und noch offen für eine Gegenprobe.
+
+SID-Bitkarten: Bit n von Byte k steht für SID 8k + n, also Byte 0 Bit 0 für SID 0.
+
+### P1: Sperrzeit nach dem Init, `D4 10` als Bereitschaftssignal
+
+Bestätigt am 12.10.2026, reproduzierbar bei jedem Start.
+
+- Nach der Quittung `46` auf `D3 19 50 00` nimmt das Modul etwa 3–4 s keine Bytes vom Host an: Hebt der Host IRQ, beginnt das Modul keinen Takt.
+- Das Ende der Sperrzeit meldet das Modul mit `D4 10 …`. Ein `D1` direkt danach wird sofort beantwortet, `D3 03` ebenso.
+- Im Ruhezustand beantwortet das Modul `D1` und `D3 03` sofort.
+- Beleg: Log vom 12.10.2026, 01:33. `46` um 01:33:49, sechs Versuche `D1` bis 01:33:52 jeweils ohne Takt, `D4 10` um 01:33:53, danach `D1` im ersten Versuch mit Antwort `D2`. Im Folgelauf um 01:46 mit Warten auf `D4 10` gingen `D1` und `D3 03` jeweils im ersten Versuch durch.
+- Folgerung für einen Host: Nach dem Init auf `D4 10` warten und erst dann senden. Die Brücke wartet höchstens 10 s.
+
+### P2: Format von `D4 10`
+
+Bestätigt.
+
+`D4 10 d2 … d9 d10 7E`, Zählung wie in der Protokollanalyse (d1 = `10`)
+
+- d2–d9: SID-Bitkarte mit 8 Byte, aufgebaut wie die Karte in `D4 03`.
+- d10: eigene SID des Moduls. Im eigenen Netz `14` = SID 20, übereinstimmend mit `D2` d11.
+
+### P3: Bedeutung der Karte in `D4 10`
+
+Vermutet, gut gestützt.
+
+Die Karte enthält die Knoten, die in der Netzrunde nach dem Init geantwortet haben. Das eigene Modul fehlt darin immer.
+
+Mitschnitte im eigenen Netz, verglichen mit `D4 03 FF 7F 1F 05 00 00 00 00` (22 Knoten):
+
+| Mitschnitt | Karte in `D4 10` | Knoten | fehlende SIDs |
+| --- | --- | --- | --- |
+| 1, vor Stufe 0 | `BF 7F 0E 05 00 00 00 00` | 19 | 6, 16, 20 |
+| 2, erster Test von Stufe 0 | `FF 7F 0E 05 00 00 00 00` | 20 | 16, 20 |
+| 3, 12.10.2026 01:33 | `FF 7F 0E 05 00 00 00 00` | 20 | 16, 20 |
+| 4, 12.10.2026 01:46 | `FD 7F 0E 05 00 00 00 00` | 19 | 1, 16, 20 |
+
+- SID 20 ist das eigene Modul.
+- SID 16 ist ein Knoten ohne Batterie, der zum Netz gehört. Er fehlt in jedem Mitschnitt.
+- SID 6 und SID 1 fehlen je einmal. Einzelne Antworten gehen in einer Runde also verloren. `D4 10` ist damit eine Momentaufnahme und taugt allein nicht als Nachweis, dass ein Knoten fehlt.
+- Gegenprobe: Batterie in SID 16 einsetzen und prüfen, ob SID 16 danach in `D4 10` erscheint.
+
+### P4: `D4 03` zeigt die Mitgliedschaft
+
+Bestätigt.
+
+Die Karte in `D4 03` (Antwort auf `D3 03`) enthält alle Knoten, die zum Netz gehören, auch solche, die gerade nicht erreichbar sind. Beleg: SID 16 ohne Batterie erscheint in allen Mitschnitten von `D4 03`. Erreichbarkeit lässt sich daraus nicht ablesen; dafür dienen `D4 10` (P3), `D4 01` und Antworten auf Fernanfragen.
+
+### P5: Der Init löst eine Netzrunde aus
+
+Vermutet, indirekt belegt.
+
+- Die Antwortkarte in `D4 10` (P3) und die Sperrzeit von 3–4 s (P1) sprechen dafür, dass das Modul nach `D3 19 50 00` alle Knoten anspricht und deren Antworten sammelt.
+- Offen ist, was andere Knoten dabei empfangen (etwa `D3 19 50 00 sid` an deren Host). Ein Mitschnitt an einem zweiten Knoten folgt in Stufe 2 **[R9]**.
+
+### P6: Werte in `D2` über mehrere Starts
+
+Beobachtung, Deutung der Felder nach der Protokollanalyse.
+
+| Mitschnitt | d1 BVNL | d2 BVWL | d3 | d4 RSSI | d5 FW | d6–d8 ID | d9 kritisch | d10 Funkfehler | d11 SID | d12 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Button im Ruhezustand, vor 01:33 | `3E` | `4F` | `4F` | `57` (87) | `EF` | `A5 B8 14` | `00` | `00` | `14` | `00` |
+| 12.10.2026 01:33 | `3E` | `4F` | `4F` | `60` (96) | `EF` | `A5 B8 14` | `00` | `00` | `14` | `00` |
+| 12.10.2026 01:46 | `3E` | `4E` | `4F` | `65` (101) | `EF` | `A5 B8 14` | `00` | `00` | `14` | `00` |
+
+- d3 bleibt in allen Mitschnitten `4F`, seine Bedeutung ist offen.
+- d11 enthält die eigene SID, gleich d10 in `D4 10` (P2).
+- d12 (in R3 als vermutet geführt) ist in allen Mitschnitten `00`.
+- RSSI schwankt zwischen den Starts um 14 Stufen, BVWL um eine Stufe.
