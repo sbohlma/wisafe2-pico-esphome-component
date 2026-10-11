@@ -28,7 +28,9 @@ Die Sendeplanung auf Kern 0 schickt höchstens einen Befehl gleichzeitig und hä
 | Funkbefehl, etwa der Init | `46` (angenommen) oder `47` (abgelehnt) | 150 ms |
 | Fernanfrage | `46`, danach die Antwort aus dem Netz | 55 s |
 
-Kern 1 sendet die Bytes eines Befehls direkt hintereinander, bis zu 32 Bytes, und meldet danach zurück, ob alle Bytes abgenommen wurden. Ein Byte zum Modul hält IRQ für die Dauer dieses Bytes auf High.
+Kern 1 sendet die Bytes eines Befehls direkt hintereinander, bis zu 32 Bytes, und meldet danach zurück, ob alle Bytes abgenommen wurden. Ein Byte zum Modul hält IRQ für die Dauer dieses Bytes auf High. Beginnt das Modul innerhalb von 5 ms nicht zu takten, bricht Kern 1 den Befehl ab und meldet den Grund.
+
+Nach dem Init nimmt das Modul einige Sekunden lang keine Bytes an. Ein Befehl, von dem noch kein Byte hinausging, wird deshalb bis zu 20-mal im Abstand von mindestens 500 ms wiederholt. Bricht ein Befehl nach dem ersten Byte ab, gilt er sofort als nicht gesendet.
 
 ## Hardware
 
@@ -103,7 +105,7 @@ Bekannte Rahmen erscheinen als Text:
 | `D4 11` | Remote-SID-Map |
 | `70`, `71`, `50`, `61` | Test, Sockel, Alarm, Stille |
 
-Alles andere erscheint als `Roh:` mit Hex-Bytes. Fehlerhafte Rahmen erscheinen als `Roh unvollständig:`, `Roh zu lang:` oder `Roh ungültige Maskierung:`. Gesendete Bytes stehen auf Stufe DEBUG als `Sende …` im Log, maskiert und mit `7E`.
+Alles andere erscheint als `Roh:` mit Hex-Bytes. Fehlerhafte Rahmen erscheinen als `Roh unvollständig:`, `Roh zu lang:` oder `Roh ungültige Maskierung:`. Gesendete Bytes stehen auf Stufe DEBUG als `Sende …` im Log, maskiert und mit `7E`. Nimmt das Modul kein Byte an, steht dort `Kern 1: Modul nimmt kein Byte an (…)` mit dem Grund: `CS belegt` (das Modul sendet gerade selbst) oder `Modul taktet nicht`.
 
 Fehler auf Kern 1, etwa eine volle Warteschlange oder ein SPI-Überlauf, kommen über `core1_log` ins selbe Log.
 

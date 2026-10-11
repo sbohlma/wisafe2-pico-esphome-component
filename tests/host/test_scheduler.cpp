@@ -51,7 +51,14 @@ struct Fixture {
     }
   }
 
-  void sent_ok() { this->scheduler.on_send_result(this->transport.next_id, true, this->now); }
+  void sent_ok() {
+    this->scheduler.on_send_result(this->transport.next_id, true,
+                                   static_cast<uint8_t>(this->transport.sent.back().size()), this->now);
+  }
+
+  void sent_failed(uint8_t sent) {
+    this->scheduler.on_send_result(this->transport.next_id, false, sent, this->now);
+  }
 
   void frame(std::initializer_list<uint8_t> bytes) {
     Frame frame;
@@ -128,11 +135,13 @@ void test_reject() {
 
 void test_send_failed() {
   Fixture f;
-  f.scheduler.enqueue(Request::local(1, D1, 1, D2_PREFIX, 1));
+  // Abbruch mitten im Befehl: keine Wiederholung, das Modul hat schon Bytes gesehen.
+  f.scheduler.enqueue(Request::local(1, D3_03, 2, D4_03_PREFIX, 2));
   f.scheduler.service(f.now, false);
-  f.scheduler.on_send_result(f.transport.next_id, false, f.now);
+  f.sent_failed(1);
   CHECK_EQ(f.results.size(), 1);
   CHECK(f.results[0].outcome == Outcome::SendFailed);
+  CHECK_EQ(f.transport.sent.size(), 1);
 
   // Ohne Meldung von Kern 1.
   f.scheduler.enqueue(Request::local(2, D1, 1, D2_PREFIX, 1));
@@ -148,6 +157,58 @@ void test_send_failed() {
   f.advance(600);
   CHECK_EQ(f.results.size(), 3);
   CHECK(f.results[2].outcome == Outcome::SendFailed);
+}
+
+void test_retry_when_no_byte_taken() {
+  Fixture f;
+  f.scheduler.enqueue(Request::local(1, D1, 1, D2_PREFIX, 1));
+  f.scheduler.enqueue(Request::local(2, D3_03, 2, D4_03_PREFIX, 2));
+  f.scheduler.service(f.now, false);
+  f.sent_failed(0);
+  CHECK(f.results.empty());
+  CHECK(!f.scheduler.busy());
+
+  // Wiederholt wird derselbe Befehl, frühestens nach der Wartezeit.
+  f.advance(SEND_RETRY_DELAY_MS - 10);
+  CHECK_EQ(f.transport.sent.size(), 1);
+  f.advance(10);
+  CHECK_EQ(f.transport.sent.size(), 2);
+  CHECK(f.transport.sent[1] == (std::vector<uint8_t>{0xD1, 0x7E}));
+  f.sent_ok();
+  f.frame({0xD2, 0x2B, 0x2E, 0x41, 0x65, 0xDF, 0xA5, 0xB8, 0x13, 0x00, 0x01, 0x10, 0x00});
+  CHECK_EQ(f.results.size(), 1);
+  CHECK_EQ(f.results[0].tag, 1);
+  CHECK(f.results[0].outcome == Outcome::Ok);
+}
+
+void test_retry_gives_up() {
+  Fixture f;
+  f.scheduler.enqueue(Request::local(1, D1, 1, D2_PREFIX, 1));
+  f.scheduler.service(f.now, false);
+  for (int attempt = 1; attempt < SEND_ATTEMPTS; ++attempt) {
+    f.sent_failed(0);
+    f.advance(SEND_RETRY_DELAY_MS);
+  }
+  CHECK_EQ(f.transport.sent.size(), SEND_ATTEMPTS);
+  CHECK(f.results.empty());
+  f.sent_failed(0);
+  CHECK_EQ(f.results.size(), 1);
+  CHECK(f.results[0].outcome == Outcome::SendFailed);
+  f.advance(2000);
+  CHECK_EQ(f.transport.sent.size(), SEND_ATTEMPTS);
+}
+
+void test_host_reply_retry_keeps_priority() {
+  Fixture f;
+  f.scheduler.enqueue(Request::local(1, D1, 1, D2_PREFIX, 1));
+  const uint8_t identity[] = {0x91, 0xA5, 0xB8, 0x14, 0x11, 0x03, 0xFF, 0x05, 0x01, 0x01};
+  f.scheduler.enqueue(Request::host_reply(2, identity, sizeof(identity), false));
+  f.scheduler.service(f.now, false);
+  CHECK_EQ(f.transport.sent[0][0], 0x91);
+  f.sent_failed(0);
+  f.advance(SEND_RETRY_DELAY_MS);
+  CHECK_EQ(f.transport.sent.size(), 2);
+  CHECK_EQ(f.transport.sent[1][0], 0x91);
 }
 
 void test_local_reply_and_quiet_time() {
@@ -297,6 +358,9 @@ void run_scheduler_tests() {
   test_no_ack();
   test_reject();
   test_send_failed();
+  test_retry_when_no_byte_taken();
+  test_retry_gives_up();
+  test_host_reply_retry_keeps_priority();
   test_local_reply_and_quiet_time();
   test_local_timeout_ignores_other_frames();
   test_single_open_remote();
