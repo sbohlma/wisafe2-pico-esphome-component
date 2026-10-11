@@ -8,7 +8,7 @@ Dieselbe Unterlage zum Ausdrucken: [HTML](WiSafe2-Pico2W-Hardware.html). Im HTML
 
 ## 1. Umfang
 
-Das Blatt beschreibt die Hardware zwischen dem Pico 2 W und einem originalen WiSafe2-Funkmodul. Die Firmware im Pico hört als SPI-Slave mit und sendet noch keine Befehle. IRQ wird ab dem Start als Ausgang auf Low gelegt. Die 3,3-V-Leitung zum Modul wird erst geschlossen, nachdem diese Firmware läuft.
+Das Blatt beschreibt die Hardware zwischen dem Pico 2 W und einem originalen WiSafe2-Funkmodul. Die Firmware im Pico ist SPI-Slave, legt IRQ ab dem Start auf Low und sendet den Init-Befehl `D3 19 50 00 7E`. Die erwartete Antwort ist `46 7E`. Die 3,3-V-Leitung zum Modul wird erst geschlossen, nachdem diese Firmware läuft.
 
 Das Funkmodul ist SPI-Master. Es erzeugt Takt und Chip-Select. Der Pico ist SPI-Slave. Beide Seiten arbeiten mit 3,3 V. Ein Pegelwandler gehört nicht in diesen Aufbau. Der Pico verträgt an den GPIO keine 5 V.
 
@@ -131,8 +131,8 @@ Der Strom des Moduls liegt beim Senden um 30 mA, beim Empfang um 20 mA. Der 3V3-
 
 - SPI-Slave auf Hardware-SPI0, Modus 0, MSB zuerst. Die Schleife läuft auf Kern 1 und liegt im RAM.
 - GP16 Empfang (MOSI des Moduls), GP19 Senden (MISO des Moduls), GP18 Takt, GP17 Chip-Select, GP20 IRQ.
-- Chip-Select ist aktiv Low und rahmt jedes einzelne Byte. IRQ liegt in Ruhe auf Low. Ein empfangenes Byte wird mit einem High-Puls von 8 µs auf IRQ quittiert. MISO gibt dabei `0x00` aus.
-- Befehle an das Modul werden noch nicht gesendet. Der Init-Befehl `D3 19 50 00 7E` und die erwartete Antwort `46 7E` folgen später. Bis dahin kann das Modul stumm bleiben.
+- Chip-Select ist aktiv Low und rahmt jedes einzelne Byte. IRQ liegt in Ruhe auf Low. Ein empfangenes Byte wird mit einem High-Puls von 8 µs auf IRQ quittiert. MISO gibt dabei `0x00` aus. Ein Byte zum Modul hält IRQ für die Dauer des Bytes auf High, und MISO gibt dieses Byte aus.
+- Nach dem Start sendet der Pico den Init-Befehl `D3 19 50 00 7E`. Die erwartete Antwort ist `46 7E`. Danach bleibt er im Empfang.
 - Die eingebaute ESPHome-Komponente `spi:` ist nur ein Master und wird nicht eingetragen.
 
 ## 10. Quellen der Padfolge und der Pegel
