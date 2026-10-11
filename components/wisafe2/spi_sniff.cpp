@@ -191,10 +191,10 @@ bool __not_in_flash_func(wait_cs)(bool level, uint32_t timeout_us) {
 }
 
 // IRQ bleibt für ein Byte High. Das Modul taktet, MISO gibt das Byte aus.
-bool __not_in_flash_func(write_byte_to_radio)(uint8_t byte) {
+ipc::SendError __not_in_flash_func(write_byte_to_radio)(uint8_t byte) {
   gpio_put(PIN_IRQ, false);
   if (!wait_cs(true, CS_WAIT_US)) {
-    return false;
+    return ipc::SendError::CsBusy;
   }
   busy_wait_short(IRQ_GAP_US);
   spi_restart(byte);
@@ -205,11 +205,15 @@ bool __not_in_flash_func(write_byte_to_radio)(uint8_t byte) {
   spi_restart(0);
   have_byte = false;
   last_cs = gpio_get(PIN_CS);
-  return finished;
+  if (!started) {
+    return ipc::SendError::NoClock;
+  }
+  return finished ? ipc::SendError::None : ipc::SendError::Incomplete;
 }
 
-void __not_in_flash_func(finish_command)(bool ok) {
-  ipc::command_results.push(ipc::CommandResult{tx_command.id, tx_index, ok});
+void __not_in_flash_func(finish_command)(ipc::SendError error) {
+  ipc::command_results.push(
+      ipc::CommandResult{tx_command.id, tx_index, error == ipc::SendError::None, error});
   tx_active = false;
 }
 
@@ -225,13 +229,14 @@ void __not_in_flash_func(service_tx)() {
     tx_active = true;
     tx_index = 0;
   }
-  if (!write_byte_to_radio(tx_command.bytes[tx_index])) {
-    finish_command(false);
+  const ipc::SendError error = write_byte_to_radio(tx_command.bytes[tx_index]);
+  if (error != ipc::SendError::None) {
+    finish_command(error);
     return;
   }
   tx_index++;
   if (tx_index >= tx_command.len) {
-    finish_command(true);
+    finish_command(ipc::SendError::None);
   }
 }
 

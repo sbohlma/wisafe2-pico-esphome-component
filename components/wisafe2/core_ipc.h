@@ -76,10 +76,32 @@ struct Command {
   uint8_t bytes[MAX_LEN];
 };
 
+enum class SendError : uint8_t {
+  None,
+  CsBusy,      // CS blieb Low, das Modul sendet gerade selbst
+  NoClock,     // das Modul hat nach IRQ High nicht zu takten begonnen
+  Incomplete,  // das Modul hat das Byte angefangen, aber nicht beendet
+};
+
+inline const char *send_error_name(SendError error) {
+  switch (error) {
+    case SendError::None:
+      return "ok";
+    case SendError::CsBusy:
+      return "CS belegt";
+    case SendError::NoClock:
+      return "Modul taktet nicht";
+    case SendError::Incomplete:
+      return "Byte unvollständig";
+  }
+  return "?";
+}
+
 struct CommandResult {
   uint8_t id;
   uint8_t sent;
   bool ok;
+  SendError error;
 };
 
 // SPI-Bytes: Kern 1 schreibt, Kern 0 liest.
