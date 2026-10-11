@@ -3,6 +3,7 @@
 #include "hardware/address_mapped.h"
 #include "hardware/gpio.h"
 #include "hardware/regs/spi.h"
+#include "hardware/resets.h"
 #include "hardware/spi.h"
 #include "hardware/timer.h"
 #include "pico/platform.h"
@@ -57,6 +58,7 @@ constexpr uint32_t INIT_SETTLE_US = 5000000;
 constexpr uint32_t INIT_REPLY_US = 125000;
 constexpr uint32_t INIT_PAUSE_US = 500000;
 constexpr uint32_t CS_WAIT_US = 5000;
+constexpr uint32_t IRQ_GAP_US = 10;
 constexpr int INIT_ATTEMPTS = 50;
 constexpr int INIT_LEN = 5;
 
@@ -100,12 +102,29 @@ void note_init_reply(uint8_t byte) {
   init_saw_46 = byte == 0x46;
 }
 
+void __not_in_flash_func(busy_wait_short)(uint32_t us) {
+  const uint32_t start = timer_hw->timerawl;
+  while ((uint32_t) (timer_hw->timerawl - start) < us) {
+  }
+}
+
 void __not_in_flash_func(pulse_irq_ack)() {
   gpio_put(PIN_IRQ, true);
-  const uint32_t start = timer_hw->timerawl;
-  while ((uint32_t) (timer_hw->timerawl - start) < 8u) {
-  }
+  busy_wait_short(8);
   gpio_put(PIN_IRQ, false);
+}
+
+// Der Slave schiebt pro Byte den ältesten FIFO-Eintrag auf MISO. Der TX-FIFO hält deshalb immer genau
+// einen Eintrag. Nur ein Reset des Blocks leert ihn, daher dieser Weg vor jedem Byte zum Modul.
+void __not_in_flash_func(spi_restart)(uint8_t first_tx) {
+  reset_block(RESETS_RESET_SPI0_BITS);
+  unreset_block_wait(RESETS_RESET_SPI0_BITS);
+  spi_hw_t *hw = spi_get_hw(spi0);
+  hw->cpsr = 2;
+  hw->cr0 = (8u - 1u) << SPI_SSPCR0_DSS_LSB;
+  hw->cr1 = SPI_SSPCR1_MS_BITS;
+  hw->dr = first_tx;
+  hw->cr1 = SPI_SSPCR1_MS_BITS | SPI_SSPCR1_SSE_BITS;
 }
 
 void __not_in_flash_func(preload_tx_zero)() {
@@ -140,8 +159,8 @@ void __not_in_flash_func(sniff_poll)() {
         preload_tx_zero();
       }
     }
+    pulse_irq_ack();
     if (have_byte) {
-      pulse_irq_ack();
       push_rx_byte(latest_byte);
       have_byte = false;
     }
@@ -170,37 +189,21 @@ bool __not_in_flash_func(wait_cs)(bool level, uint32_t timeout_us) {
   return true;
 }
 
-void __not_in_flash_func(flush_spi_fifos)() {
-  hw_clear_bits(&spi_get_hw(spi0)->cr1, SPI_SSPCR1_SSE_BITS);
-  hw_set_bits(&spi_get_hw(spi0)->cr1, SPI_SSPCR1_MS_BITS);
-  hw_set_bits(&spi_get_hw(spi0)->cr1, SPI_SSPCR1_SSE_BITS);
-}
-
-void __not_in_flash_func(discard_rx)() {
-  while (spi_is_readable(spi0)) {
-    (void) spi_get_hw(spi0)->dr;
-  }
-  if ((spi_get_hw(spi0)->ris & SPI_SSPRIS_RORRIS_BITS) != 0) {
-    spi_get_hw(spi0)->icr = SPI_SSPICR_RORIC_BITS;
-  }
-  have_byte = false;
-  last_cs = gpio_get(PIN_CS);
-}
-
 // IRQ bleibt für ein Byte High. Das Modul taktet, MISO gibt das Byte aus.
 bool __not_in_flash_func(write_byte_to_radio)(uint8_t byte) {
   gpio_put(PIN_IRQ, false);
   if (!wait_cs(true, CS_WAIT_US)) {
     return false;
   }
-  flush_spi_fifos();
-  spi_get_hw(spi0)->dr = byte;
+  busy_wait_short(IRQ_GAP_US);
+  spi_restart(byte);
   gpio_put(PIN_IRQ, true);
   const bool started = wait_cs(false, CS_WAIT_US);
   const bool finished = started && wait_cs(true, CS_WAIT_US);
   gpio_put(PIN_IRQ, false);
-  discard_rx();
-  preload_tx_zero();
+  spi_restart(0);
+  have_byte = false;
+  last_cs = gpio_get(PIN_CS);
   return finished;
 }
 
@@ -218,7 +221,11 @@ void __not_in_flash_func(service_init)() {
     return;
   }
   if (init_phase == InitPhase::Sending) {
-    (void) write_byte_to_radio(init_cmd[init_tx_index]);
+    if (!write_byte_to_radio(init_cmd[init_tx_index])) {
+      init_phase = InitPhase::Pause;
+      init_mark_us = timer_hw->timerawl;
+      return;
+    }
     init_tx_index++;
     if (init_tx_index >= INIT_LEN) {
       init_phase = InitPhase::WaitReply;
@@ -265,21 +272,11 @@ void setup1() {
   gpio_set_dir(PIN_IRQ, GPIO_OUT);
   gpio_put(PIN_IRQ, false);
 
-  spi_init(spi0, 1000 * 1000);
-  spi_set_format(spi0, 8, SPI_CPOL_0, SPI_CPHA_0, SPI_MSB_FIRST);
-  spi_set_slave(spi0, true);
+  spi_restart(0);
   gpio_set_function(PIN_MOSI_FROM_RADIO, GPIO_FUNC_SPI);
   gpio_set_function(PIN_CS, GPIO_FUNC_SPI);
   gpio_set_function(PIN_SCK, GPIO_FUNC_SPI);
   gpio_set_function(PIN_MISO_TO_RADIO, GPIO_FUNC_SPI);
-
-  while (spi_is_readable(spi0)) {
-    (void) spi_get_hw(spi0)->dr;
-  }
-  for (int index = 0; index < 8 && spi_is_writable(spi0); ++index) {
-    spi_get_hw(spi0)->dr = 0;
-  }
-  spi_get_hw(spi0)->icr = SPI_SSPICR_RORIC_BITS;
   last_cs = gpio_get(PIN_CS);
   init_phase = InitPhase::Settle;
   init_mark_us = timer_hw->timerawl;
