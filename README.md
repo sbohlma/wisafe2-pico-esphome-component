@@ -6,11 +6,9 @@ Die zertifizierten Melder bleiben die Sicherheitsanlage. Diese Brücke hört im 
 
 ## Stand
 
-Die Komponente empfängt. Sie sendet noch keine Befehle an das Funkmodul.
+Nach dem Start sendet Kern 1 den Init-Befehl `D3 19 50 00 7E`. Die erwartete Antwort `46 7E` erscheint im Log als `Antwort bereit 46 7E`. Danach bleibt die Komponente im Empfang.
 
-Kern 1 ist SPI-Slave, legt IRQ beim Start auf Low und quittiert jedes empfangene Byte mit einem IRQ-Puls von 8 µs. Auf MISO liegt dabei `0x00`. Die Bytes gehen über eine Warteschlange nach Kern 0. Dort werden Rahmen bis `7E` erkannt und ins Log geschrieben.
-
-Der spätere Init-Befehl ist `D3 19 50 00 7E`, die erwartete Antwort `46 7E`. Ohne diesen Befehl kann das Modul stumm bleiben. Der erste erwartete Verkehr ist eine Testtaste an einem bereits gekoppelten Melder.
+Kern 1 ist SPI-Slave, legt IRQ beim Start auf Low und quittiert jedes empfangene Byte mit einem IRQ-Puls von 8 µs. Auf MISO liegt im Empfang `0x00`. Ein Byte zum Modul hält IRQ für die Dauer dieses Bytes auf High. Die Bytes gehen über eine Warteschlange nach Kern 0. Dort werden Rahmen bis `7E` erkannt und ins Log geschrieben.
 
 ## Hardware
 

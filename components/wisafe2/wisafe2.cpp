@@ -24,7 +24,7 @@ void WiSafe2Component::emit_frame_(bool complete) {
 }
 
 void WiSafe2Component::setup() {
-  ESP_LOGI(TAG, "SPI-Slave auf Kern 1, nur Empfang");
+  ESP_LOGI(TAG, "SPI-Slave auf Kern 1");
   if (this->status_sensor_ != nullptr) {
     this->status_sensor_->publish_state("bereit");
   }
@@ -62,7 +62,7 @@ void WiSafe2Component::dump_config() {
   ESP_LOGCONFIG(TAG, "WiSafe2:");
   LOG_TEXT_SENSOR("  ", "Status", this->status_sensor_);
   ESP_LOGCONFIG(TAG, "  SPI-Slave Kern 1: GP16 MOSI, GP17 CS, GP18 SCK, GP19 MISO, GP20 IRQ");
-  ESP_LOGCONFIG(TAG, "  Empfang mit IRQ-Quittung 8 us, keine Befehle");
+  ESP_LOGCONFIG(TAG, "  Empfang mit IRQ-Quittung 8 us, Init D3 19 50 00 7E");
 }
 
 }  // namespace wisafe2
