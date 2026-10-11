@@ -6,9 +6,9 @@ Die zertifizierten Melder bleiben die Sicherheitsanlage. Diese Brücke hört im 
 
 ## Stand
 
-5 s nach dem Start reiht Kern 0 den Init-Befehl `D3 19 50 00 7E` ein. Die erwartete Antwort `46 7E` erscheint im Log als `Antwort bereit 46 7E`. Ohne Antwort wiederholt Kern 0 den Befehl bis zu 50-mal im Abstand von etwa 0,7 s. Der Button `init_button` startet denselben Ablauf jederzeit neu, ohne die Wartezeit von 5 s.
+Beim Start hält Kern 1 nur IRQ auf Low. Die Kommunikation mit dem Modul beginnt erst, wenn ESPHome hochgefahren und das WLAN verbunden ist. 5 s danach, damit sich Log-Clients verbinden können, fordert Kern 0 die Einrichtung des SPI-Slaves an und reiht unmittelbar danach den Init-Befehl `D3 19 50 00 7E` ein. Die erwartete Antwort `46 7E` erscheint im Log als `Antwort bereit 46 7E`. Ohne Antwort wiederholt Kern 0 den Befehl bis zu 50-mal im Abstand von etwa 0,7 s. Der Button `init_button` startet denselben Ablauf jederzeit neu.
 
-Kern 1 ist SPI-Slave, legt IRQ beim Start auf Low und quittiert jedes empfangene Byte mit einem IRQ-Puls von 8 µs. Auf MISO liegt im Empfang `0x00`. Die empfangenen Bytes gehen über eine Warteschlange nach Kern 0. Dort werden Rahmen bis `7E` erkannt und ins Log geschrieben.
+Kern 1 ist SPI-Slave und quittiert jedes empfangene Byte mit einem IRQ-Puls von 8 µs. Auf MISO liegt im Empfang `0x00`. Die empfangenen Bytes gehen über eine Warteschlange nach Kern 0. Dort werden Rahmen bis `7E` erkannt und ins Log geschrieben.
 
 Befehle an das Modul kommen von Kern 0 über eine zweite Warteschlange, bis zu 32 Bytes je Befehl. Kern 1 sendet die Bytes eines Befehls direkt hintereinander und meldet danach zurück, ob alle Bytes abgenommen wurden. Ein Byte zum Modul hält IRQ für die Dauer dieses Bytes auf High.
 
@@ -49,7 +49,7 @@ Der Ordner `components/wisafe2` wird darüber geladen. Der Status-Sensor meldet 
 
 `spi_button` richtet SPI-Slave und IRQ auf Kern 1 neu ein, zum Testen, sobald kein Befehl unterwegs ist. Danach steht im Log `SPI-Slave gestartet, CS …, SCK …, MOSI …` mit den gelesenen Pegeln. Im Ruhezustand sind CS High und SCK Low.
 
-Der Init-Ablauf beim Start ist nach etwa 40 s abgeschlossen. Über WLAN verbindet sich der Log-Client oft erst danach. Zum Prüfen deshalb das Log öffnen und dann `WiSafe2 Init senden` drücken. Ein Druck sendet den Befehl bis zu 50-mal und hört bei `46 7E` auf.
+Verbindet sich der Log-Client erst später, `WiSafe2 Init senden` drücken. Ein Druck sendet den Befehl bis zu 50-mal und hört bei `46 7E` auf.
 
 ## Log
 

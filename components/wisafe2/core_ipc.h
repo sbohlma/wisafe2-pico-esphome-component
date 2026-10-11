@@ -89,8 +89,8 @@ bool poll_spi_byte(uint8_t &byte);
 bool send_command(uint8_t id, const uint8_t *bytes, size_t len);
 bool poll_command_result(CommandResult &result);
 
-// Kern 0 fordert an, Kern 1 richtet SPI-Slave und IRQ neu ein, sobald kein Befehl unterwegs ist,
-// und meldet die Pegel von CS, SCK und MOSI.
+// Kern 0 fordert an, Kern 1 richtet SPI-Slave und IRQ ein, sobald kein Befehl unterwegs ist, und meldet
+// die Pegel von CS, SCK und MOSI. Vor der ersten Anforderung sendet und empfängt Kern 1 nichts.
 void request_spi_setup();
 
 }  // namespace ipc

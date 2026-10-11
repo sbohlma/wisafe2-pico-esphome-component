@@ -2,6 +2,7 @@
 
 #include "core_ipc.h"
 #include "frame_analyzer.h"
+#include "esphome/components/network/util.h"
 #include "esphome/core/hal.h"
 #include "esphome/core/log.h"
 
@@ -12,7 +13,8 @@ static const char *const TAG = "wisafe2";
 static constexpr uint32_t FRAME_GAP_MS = 80;
 
 static constexpr uint8_t INIT_COMMAND[] = {0xD3, 0x19, 0x50, 0x00, 0x7E};
-static constexpr uint32_t INIT_SETTLE_MS = 5000;
+// Gibt Log-Clients nach dem WLAN-Aufbau Zeit, sich zu verbinden.
+static constexpr uint32_t MODULE_START_DELAY_MS = 5000;
 static constexpr uint32_t INIT_SENT_TIMEOUT_MS = 1000;
 static constexpr uint32_t INIT_REPLY_MS = 125;
 static constexpr uint32_t INIT_PAUSE_MS = 500;
@@ -46,7 +48,15 @@ bool WiSafe2Component::send_command(const uint8_t *bytes, size_t len, uint8_t *i
   return true;
 }
 
+void WiSafe2Component::start_module_() {
+  if (!this->module_started_) {
+    ipc::request_spi_setup();
+    this->module_started_ = true;
+  }
+}
+
 void WiSafe2Component::start_init() {
+  this->start_module_();
   this->init_attempt_ = 0;
   if (this->init_state_ != InitState::AwaitSent) {
     this->init_state_ = InitState::Send;
@@ -63,8 +73,15 @@ void WiSafe2Component::handle_command_result_(uint8_t id, bool ok) {
 void WiSafe2Component::service_init_() {
   const uint32_t now = millis();
   switch (this->init_state_) {
+    case InitState::WaitNetwork:
+      if (network::is_connected()) {
+        this->init_state_ = InitState::Settle;
+        this->init_mark_ms_ = now;
+      }
+      break;
     case InitState::Settle:
-      if (now - this->init_mark_ms_ >= INIT_SETTLE_MS) {
+      if (now - this->init_mark_ms_ >= MODULE_START_DELAY_MS) {
+        this->start_module_();
         this->init_state_ = InitState::Send;
       }
       break;
@@ -97,8 +114,7 @@ void WiSafe2Component::service_init_() {
 }
 
 void WiSafe2Component::setup() {
-  ESP_LOGI(TAG, "SPI-Slave auf Kern 1");
-  this->init_mark_ms_ = millis();
+  ESP_LOGI(TAG, "Modulstart nach WLAN-Verbindung");
   if (this->status_sensor_ != nullptr) {
     this->status_sensor_->publish_state("bereit");
   }

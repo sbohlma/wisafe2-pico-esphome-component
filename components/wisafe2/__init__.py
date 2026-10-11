@@ -3,7 +3,7 @@ import esphome.config_validation as cv
 from esphome.components import button, text_sensor
 from esphome.const import CONF_ID, ENTITY_CATEGORY_CONFIG
 
-AUTO_LOAD = ["button", "text_sensor"]
+AUTO_LOAD = ["button", "network", "text_sensor"]
 
 wisafe2_ns = cg.esphome_ns.namespace("wisafe2")
 WiSafe2Component = wisafe2_ns.class_("WiSafe2Component", cg.Component)

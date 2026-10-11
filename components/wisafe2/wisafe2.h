@@ -20,12 +20,13 @@ class WiSafe2Component : public Component {
 
   // Reiht einen Befehl für Kern 1 ein. false, wenn die Warteschlange voll oder der Befehl zu lang ist.
   bool send_command(const uint8_t *bytes, size_t len, uint8_t *id = nullptr);
-  // Startet den Init-Ablauf sofort, ohne die Wartezeit nach dem Start.
+  // Startet den Init-Ablauf sofort. Richtet vorher den SPI-Slave ein, falls das noch nicht geschehen ist.
   void start_init();
 
  protected:
-  enum class InitState : uint8_t { Settle, Send, AwaitSent, AwaitReply, Pause, Done };
+  enum class InitState : uint8_t { WaitNetwork, Settle, Send, AwaitSent, AwaitReply, Pause, Done };
 
+  void start_module_();
   void emit_frame_(bool complete);
   void handle_command_result_(uint8_t id, bool ok);
   void service_init_();
@@ -37,7 +38,8 @@ class WiSafe2Component : public Component {
   bool frame_open_{false};
 
   uint8_t next_command_id_{0};
-  InitState init_state_{InitState::Settle};
+  bool module_started_{false};
+  InitState init_state_{InitState::WaitNetwork};
   uint32_t init_mark_ms_{0};
   int init_attempt_{0};
   uint8_t init_command_id_{0};

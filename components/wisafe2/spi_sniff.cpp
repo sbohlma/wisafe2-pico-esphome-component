@@ -87,6 +87,7 @@ bool spi_drop_pending = false;
 bool spi_overrun_pending = false;
 uint32_t last_fault_log_us = 0;
 
+bool spi_ready = false;
 ipc::Command tx_command{};
 bool tx_active = false;
 uint8_t tx_index = 0;
@@ -243,11 +244,14 @@ void __not_in_flash_func(poll_faults)() {
 
 const char *level_name(unsigned int pin) { return gpio_get(pin) ? "High" : "Low"; }
 
-void spi_slave_setup() {
+void irq_low() {
   gpio_init(PIN_IRQ);
   gpio_set_dir(PIN_IRQ, GPIO_OUT);
   gpio_put(PIN_IRQ, false);
+}
 
+void spi_slave_setup() {
+  irq_low();
   spi_restart(0);
   gpio_set_function(PIN_MOSI_FROM_RADIO, GPIO_FUNC_SPI);
   gpio_set_function(PIN_CS, GPIO_FUNC_SPI);
@@ -255,6 +259,7 @@ void spi_slave_setup() {
   gpio_set_function(PIN_MISO_TO_RADIO, GPIO_FUNC_SPI);
   last_cs = gpio_get(PIN_CS);
   have_byte = false;
+  spi_ready = true;
 
   char text[ipc::LogMessage::TEXT_LEN];
   std::snprintf(text, sizeof(text), "SPI-Slave gestartet, CS %s, SCK %s, MOSI %s", level_name(PIN_CS),
@@ -267,11 +272,15 @@ void spi_slave_setup() {
 bool core1_separate_stack = true;
 
 // arduino-pico startet Kern 1 nur, wenn es setup1/loop1 unter ihrem C-Namen findet.
-extern "C" void setup1() { spi_slave_setup(); }
+// Der SPI-Slave wird erst auf Anforderung von Kern 0 eingerichtet. Bis dahin hält Kern 1 nur IRQ auf Low.
+extern "C" void setup1() { irq_low(); }
 
 extern "C" void __not_in_flash_func(loop1)() {
   if (!tx_active && ipc::spi_setup_requested.exchange(false, std::memory_order_acquire)) {
     spi_slave_setup();
+  }
+  if (!spi_ready) {
+    return;
   }
   if (!tx_active) {
     sniff_poll();
