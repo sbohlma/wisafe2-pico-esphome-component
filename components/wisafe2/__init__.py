@@ -40,6 +40,7 @@ async def to_code(config):
         await text_sensor.register_text_sensor(sens, config[CONF_STATUS])
         cg.add(var.set_status_sensor(sens))
     if CONF_INIT_BUTTON in config:
-        await button.new_button(config[CONF_INIT_BUTTON])
+        btn = await button.new_button(config[CONF_INIT_BUTTON])
+        cg.add(btn.set_parent(var))
     if CONF_SPI_BUTTON in config:
         await button.new_button(config[CONF_SPI_BUTTON])

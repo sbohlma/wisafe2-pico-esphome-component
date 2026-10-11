@@ -9,6 +9,7 @@
 #include "pico/platform.h"
 
 #include <cstdio>
+#include <cstring>
 
 namespace esphome {
 namespace wisafe2 {
@@ -16,8 +17,9 @@ namespace ipc {
 
 SpscQueue<LogMessage, 8> core1_logs;
 SpscQueue<uint8_t, 256> spi_bytes;
+SpscQueue<Command, 8> commands;
+SpscQueue<CommandResult, 8> command_results;
 std::atomic<uint32_t> dropped_logs{0};
-std::atomic<bool> init_requested{false};
 std::atomic<bool> spi_setup_requested{false};
 
 bool core1_log(const char *message) {
@@ -46,7 +48,18 @@ uint32_t take_dropped_logs() { return dropped_logs.exchange(0, std::memory_order
 
 bool poll_spi_byte(uint8_t &byte) { return spi_bytes.pop(byte); }
 
-void request_init() { init_requested.store(true, std::memory_order_release); }
+bool send_command(uint8_t id, const uint8_t *bytes, size_t len) {
+  if (bytes == nullptr || len == 0 || len > Command::MAX_LEN) {
+    return false;
+  }
+  Command command{};
+  command.id = id;
+  command.len = static_cast<uint8_t>(len);
+  std::memcpy(command.bytes, bytes, len);
+  return commands.push(command);
+}
+
+bool poll_command_result(CommandResult &result) { return command_results.pop(result); }
 
 void request_spi_setup() { spi_setup_requested.store(true, std::memory_order_release); }
 
@@ -56,21 +69,16 @@ void request_spi_setup() { spi_setup_requested.store(true, std::memory_order_rel
 
 namespace {
 
+namespace ipc = esphome::wisafe2::ipc;
+
 constexpr unsigned int PIN_MOSI_FROM_RADIO = 16;
 constexpr unsigned int PIN_CS = 17;
 constexpr unsigned int PIN_SCK = 18;
 constexpr unsigned int PIN_MISO_TO_RADIO = 19;
 constexpr unsigned int PIN_IRQ = 20;
 
-constexpr uint32_t INIT_SETTLE_US = 5000000;
-constexpr uint32_t INIT_REPLY_US = 125000;
-constexpr uint32_t INIT_PAUSE_US = 500000;
 constexpr uint32_t CS_WAIT_US = 5000;
 constexpr uint32_t IRQ_GAP_US = 10;
-constexpr int INIT_ATTEMPTS = 50;
-constexpr int INIT_LEN = 5;
-
-enum class InitPhase { Settle, Sending, WaitReply, Pause, Done };
 
 bool last_cs = true;
 bool have_byte = false;
@@ -79,35 +87,20 @@ bool spi_drop_pending = false;
 bool spi_overrun_pending = false;
 uint32_t last_fault_log_us = 0;
 
-InitPhase init_phase = InitPhase::Settle;
-uint32_t init_mark_us = 0;
-int init_attempt = 0;
-int init_tx_index = 0;
-bool init_saw_46 = false;
-uint8_t init_cmd[INIT_LEN] = {0xD3, 0x19, 0x50, 0x00, 0x7E};
+ipc::Command tx_command{};
+bool tx_active = false;
+uint8_t tx_index = 0;
 
 void report_spi_faults() {
   if (spi_drop_pending) {
-    esphome::wisafe2::ipc::core1_log("SPI: Bytes verworfen, Warteschlange voll");
+    ipc::core1_log("SPI: Bytes verworfen, Warteschlange voll");
     spi_drop_pending = false;
   }
   if (spi_overrun_pending) {
-    esphome::wisafe2::ipc::core1_log("SPI: Hardware-Überlauf");
+    ipc::core1_log("SPI: Hardware-Überlauf");
     spi_overrun_pending = false;
   }
   last_fault_log_us = timer_hw->timerawl;
-}
-
-void note_init_reply(uint8_t byte) {
-  if (init_phase == InitPhase::Done || init_phase == InitPhase::Settle || init_phase == InitPhase::Sending) {
-    return;
-  }
-  if (init_saw_46 && byte == 0x7E) {
-    init_phase = InitPhase::Done;
-    init_saw_46 = false;
-    return;
-  }
-  init_saw_46 = byte == 0x46;
 }
 
 void __not_in_flash_func(busy_wait_short)(uint32_t us) {
@@ -142,8 +135,7 @@ void __not_in_flash_func(preload_tx_zero)() {
 }
 
 void __not_in_flash_func(push_rx_byte)(uint8_t byte) {
-  note_init_reply(byte);
-  if (!esphome::wisafe2::ipc::spi_bytes.push(byte)) {
+  if (!ipc::spi_bytes.push(byte)) {
     spi_drop_pending = true;
   }
 }
@@ -215,60 +207,30 @@ bool __not_in_flash_func(write_byte_to_radio)(uint8_t byte) {
   return finished;
 }
 
-void __not_in_flash_func(service_init)() {
-  const uint32_t now = timer_hw->timerawl;
-  if (init_phase != InitPhase::Sending &&
-      esphome::wisafe2::ipc::init_requested.exchange(false, std::memory_order_acquire)) {
-    init_attempt = 0;
-    init_tx_index = 0;
-    init_saw_46 = false;
-    init_phase = InitPhase::Sending;
-    return;
-  }
-  if (init_phase == InitPhase::Done) {
-    return;
-  }
-  if (init_phase == InitPhase::Settle) {
-    if ((uint32_t) (now - init_mark_us) >= INIT_SETTLE_US) {
-      init_phase = InitPhase::Sending;
-      init_tx_index = 0;
-      init_saw_46 = false;
-    }
-    return;
-  }
-  if (init_phase == InitPhase::Sending) {
-    if (!write_byte_to_radio(init_cmd[init_tx_index])) {
-      init_phase = InitPhase::Pause;
-      init_mark_us = timer_hw->timerawl;
+void __not_in_flash_func(finish_command)(bool ok) {
+  ipc::command_results.push(ipc::CommandResult{tx_command.id, tx_index, ok});
+  tx_active = false;
+}
+
+void __not_in_flash_func(service_tx)() {
+  if (!tx_active) {
+    // Ein Byte vom Modul ist gerade unterwegs. Der Block-Reset beim Senden würde es verwerfen.
+    if (!last_cs || have_byte) {
       return;
     }
-    init_tx_index++;
-    if (init_tx_index >= INIT_LEN) {
-      init_phase = InitPhase::WaitReply;
-      init_mark_us = timer_hw->timerawl;
-      init_saw_46 = false;
-    }
-    return;
-  }
-  if (init_phase == InitPhase::WaitReply) {
-    if ((uint32_t) (now - init_mark_us) >= INIT_REPLY_US) {
-      init_phase = InitPhase::Pause;
-      init_mark_us = now;
-    }
-    return;
-  }
-  if (init_phase == InitPhase::Pause) {
-    if ((uint32_t) (now - init_mark_us) < INIT_PAUSE_US) {
+    if (!ipc::commands.pop(tx_command)) {
       return;
     }
-    if (init_attempt >= INIT_ATTEMPTS - 1) {
-      init_phase = InitPhase::Done;
-      return;
-    }
-    init_attempt++;
-    init_tx_index = 0;
-    init_saw_46 = false;
-    init_phase = InitPhase::Sending;
+    tx_active = true;
+    tx_index = 0;
+  }
+  if (!write_byte_to_radio(tx_command.bytes[tx_index])) {
+    finish_command(false);
+    return;
+  }
+  tx_index++;
+  if (tx_index >= tx_command.len) {
+    finish_command(true);
   }
 }
 
@@ -294,10 +256,10 @@ void spi_slave_setup() {
   last_cs = gpio_get(PIN_CS);
   have_byte = false;
 
-  char text[esphome::wisafe2::ipc::LogMessage::TEXT_LEN];
+  char text[ipc::LogMessage::TEXT_LEN];
   std::snprintf(text, sizeof(text), "SPI-Slave gestartet, CS %s, SCK %s, MOSI %s", level_name(PIN_CS),
                 level_name(PIN_SCK), level_name(PIN_MOSI_FROM_RADIO));
-  esphome::wisafe2::ipc::core1_log(text);
+  ipc::core1_log(text);
 }
 
 }  // namespace
@@ -305,21 +267,15 @@ void spi_slave_setup() {
 bool core1_separate_stack = true;
 
 // arduino-pico startet Kern 1 nur, wenn es setup1/loop1 unter ihrem C-Namen findet.
-extern "C" void setup1() {
-  spi_slave_setup();
-  init_phase = InitPhase::Settle;
-  init_mark_us = timer_hw->timerawl;
-  init_attempt = 0;
-}
+extern "C" void setup1() { spi_slave_setup(); }
 
 extern "C" void __not_in_flash_func(loop1)() {
-  if (init_phase != InitPhase::Sending &&
-      esphome::wisafe2::ipc::spi_setup_requested.exchange(false, std::memory_order_acquire)) {
+  if (!tx_active && ipc::spi_setup_requested.exchange(false, std::memory_order_acquire)) {
     spi_slave_setup();
   }
-  if (init_phase != InitPhase::Sending) {
+  if (!tx_active) {
     sniff_poll();
   }
-  service_init();
+  service_tx();
   poll_faults();
 }

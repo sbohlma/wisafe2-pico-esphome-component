@@ -1,14 +1,16 @@
 #pragma once
 
 #include "core_ipc.h"
+#include "wisafe2.h"
 #include "esphome/components/button/button.h"
+#include "esphome/core/helpers.h"
 
 namespace esphome {
 namespace wisafe2 {
 
-class WiSafe2InitButton : public button::Button {
+class WiSafe2InitButton : public button::Button, public Parented<WiSafe2Component> {
  protected:
-  void press_action() override { ipc::request_init(); }
+  void press_action() override { this->parent_->start_init(); }
 };
 
 class WiSafe2SpiButton : public button::Button {

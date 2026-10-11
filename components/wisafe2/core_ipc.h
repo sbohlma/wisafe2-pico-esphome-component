@@ -68,13 +68,29 @@ bool core1_log(const char *message);
 bool poll_core1_log(char *out, size_t out_len);
 uint32_t take_dropped_logs();
 
+// Ein Befehl an das Modul. Kern 1 sendet seine Bytes direkt hintereinander.
+struct Command {
+  static constexpr size_t MAX_LEN = 32;
+  uint8_t id;
+  uint8_t len;
+  uint8_t bytes[MAX_LEN];
+};
+
+struct CommandResult {
+  uint8_t id;
+  uint8_t sent;
+  bool ok;
+};
+
 // SPI-Bytes: Kern 1 schreibt, Kern 0 liest.
 bool poll_spi_byte(uint8_t &byte);
 
-// Kern 0 fordert an, Kern 1 startet den Init-Ablauf neu, sobald kein Byte zum Modul unterwegs ist.
-void request_init();
+// Befehle: Kern 0 schreibt, Kern 1 sendet und meldet je Befehl ein Ergebnis zurück.
+bool send_command(uint8_t id, const uint8_t *bytes, size_t len);
+bool poll_command_result(CommandResult &result);
 
-// Ebenso: Kern 1 richtet SPI-Slave und IRQ neu ein und meldet die Pegel von CS, SCK und MOSI.
+// Kern 0 fordert an, Kern 1 richtet SPI-Slave und IRQ neu ein, sobald kein Befehl unterwegs ist,
+// und meldet die Pegel von CS, SCK und MOSI.
 void request_spi_setup();
 
 }  // namespace ipc
