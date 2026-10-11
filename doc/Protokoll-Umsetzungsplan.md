@@ -1,6 +1,6 @@
 # Umsetzungsplan: W2-Modulprotokoll auf der Pico-2-W-Brücke
 
-Stand: 11.10.2026, Entscheidungen E1–E12 getroffen, E3 und E7 überarbeitet. Grundlage ist [PROTOCOL_ANALYSIS_W2_MODULE.md](https://github.com/sbohlma/FireAngel/blob/main/wisafe-mm/docs/PROTOCOL_ANALYSIS_W2_MODULE.md) (im Folgenden „Protokollanalyse“) mit den dort genannten Quellen, vor allem NikNakks [fireangel-pro-connected-esphome](https://github.com/NikNakk/fireangel-pro-connected-esphome), Tho85s [ws2mqtt](https://github.com/Tho85/ws2mqtt) und [wisafe-mm](https://github.com/sbohlma/FireAngel/tree/main/wisafe-mm).
+Stand: 11.10.2026, Entscheidungen E1–E12 getroffen, E3 und E7 überarbeitet, Stufe 0 im Code umgesetzt. Grundlage ist [PROTOCOL_ANALYSIS_W2_MODULE.md](https://github.com/sbohlma/FireAngel/blob/main/wisafe-mm/docs/PROTOCOL_ANALYSIS_W2_MODULE.md) (im Folgenden „Protokollanalyse“) mit den dort genannten Quellen, vor allem NikNakks [fireangel-pro-connected-esphome](https://github.com/NikNakk/fireangel-pro-connected-esphome), Tho85s [ws2mqtt](https://github.com/Tho85/ws2mqtt) und [wisafe-mm](https://github.com/sbohlma/FireAngel/tree/main/wisafe-mm).
 
 Ziel: Alle Melder im Netz erscheinen in ESPHome und Home Assistant mit Zustand, Fehlern, Batterie und Ereignissen. Diagnose und Netztest stehen als Funktionen bereit.
 
@@ -57,6 +57,8 @@ Die Sendeplanung kennt drei Klassen von Befehlen:
 Jede Stufe endet mit einem lauffähigen Stand, Host-Tests und einer Prüfung auf der Hardware.
 
 ### Stufe 0: Rahmenschicht und Sendeplanung
+
+Stand: im Code umgesetzt (`framing`, `messages`, `scheduler`, Host-Tests unter `tests/host`). Die Abnahme auf der Hardware steht aus.
 
 Ziel: Rahmen werden korrekt erkannt und gesendet, Befehle laufen im richtigen Takt.
 
@@ -291,4 +293,4 @@ Getroffen am 11.10.2026.
 
 ## 8. Nächster Schritt
 
-Umsetzung von Stufe 0: Rahmenschicht, Maskierung und Sendeplanung, mit Host-Tests und dem Mitschnitt zur Flutung beim Init.
+Hardware-Abnahme von Stufe 0: Init mit Quittung, Buttons „RM-Status lesen“ (`D1`) und „SID-Map lesen“ (`D3 03`) ohne verlorene Antwort, dazu der Mitschnitt zur Flutung beim Init. Danach folgt Stufe 1.
