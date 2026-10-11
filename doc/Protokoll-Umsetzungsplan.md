@@ -1,6 +1,6 @@
 # Umsetzungsplan: W2-Modulprotokoll auf der Pico-2-W-Brücke
 
-Stand: 11.10.2026, Entscheidungen E1–E12 getroffen. Grundlage ist [PROTOCOL_ANALYSIS_W2_MODULE.md](https://github.com/sbohlma/FireAngel/blob/main/wisafe-mm/docs/PROTOCOL_ANALYSIS_W2_MODULE.md) (im Folgenden „Protokollanalyse“) mit den dort genannten Quellen, vor allem NikNakks [fireangel-pro-connected-esphome](https://github.com/NikNakk/fireangel-pro-connected-esphome), Tho85s [ws2mqtt](https://github.com/Tho85/ws2mqtt) und [wisafe-mm](https://github.com/sbohlma/FireAngel/tree/main/wisafe-mm).
+Stand: 11.10.2026, Entscheidungen E1–E12 getroffen, E3 und E7 überarbeitet. Grundlage ist [PROTOCOL_ANALYSIS_W2_MODULE.md](https://github.com/sbohlma/FireAngel/blob/main/wisafe-mm/docs/PROTOCOL_ANALYSIS_W2_MODULE.md) (im Folgenden „Protokollanalyse“) mit den dort genannten Quellen, vor allem NikNakks [fireangel-pro-connected-esphome](https://github.com/NikNakk/fireangel-pro-connected-esphome), Tho85s [ws2mqtt](https://github.com/Tho85/ws2mqtt) und [wisafe-mm](https://github.com/sbohlma/FireAngel/tree/main/wisafe-mm).
 
 Ziel: Alle Melder im Netz erscheinen in ESPHome und Home Assistant mit Zustand, Fehlern, Batterie und Ereignissen. Diagnose und Netztest stehen als Funktionen bereit.
 
@@ -38,7 +38,7 @@ Kern 1 bleibt ein reiner Byte-Transport und wird nicht erweitert. Die gesamte Pr
 | Rahmen | `framing.h/.cpp` | Bytes zu Rahmen: Füllbytes, Demaskierung, Ende `7E`, Zeitlimit. Beim Senden maskieren und `7E` anhängen |
 | Nachrichten | `messages.h/.cpp` | Rahmen zu typisierten Nachrichten und zurück. Ein `struct` je Typ, SID und Sequenznummer von hinten gelesen |
 | Sendeplanung | `scheduler.h/.cpp` | Warteschlange mit Prioritäten, 500 ms Ruhe, eine offene Fernanfrage, Zuordnung von Antworten, Zeitlimits |
-| Melderregister | `registry.h/.cpp` | Tabelle aller Knoten (SID 0–63) mit Gerät, Modell, Klasse und Zuständen, Laden und Speichern von `nodes.json` |
+| Melderregister | `registry.h/.cpp` | Tabelle mit 50 festen Plätzen (Netzvorgabe) mit SID, Gerät, Modell, Klasse und Zuständen, Laden und Speichern von `nodes.bin` |
 | Abläufe | `discovery.cpp`, `host_identity.cpp` | Netzerkundung, Antworten auf `41`, `C3`, `72`, `C7`, `C5`, `C1` |
 | ESPHome | `wisafe2.cpp`, Plattformdateien | Entitäten, Aktionen, Buttons, Ereignisse |
 
@@ -79,7 +79,10 @@ Ziel: Jede bekannte Nachricht wird verstanden und lesbar geloggt. Die Brücke tr
 - Feldauswertung: Geräte-ID in Anzeigereihenfolge, Modelltabelle mit allen 14 Modellen der Protokollanalyse (`11 04` = WHT-630 **[E12]**), Klassen, Fehlerflags `71`, Fehlerdetails `73` je Modell, Batterie `C8` in mV, RM-Batterie nach U = 1048,576 / (BVNL + 285) V, RSSI.
 - Entfernen von Duplikaten über (SID, Typ, Sequenznummer) mit einem Fenster von 60 s.
 - Eigenes RM: `D1` und `D3 03` beim Start und auf Abruf. Daraus entstehen Sensoren für eigene SID, Kopplung, RM-Batterie, RSSI, Firmware, gelernte Geräte-ID und Funkfehler.
-- Identität **[E3]**: Jedes `41` wird sofort mit `91 dev model FF 05 01 01` beantwortet. Die Geräte-ID wird aus der Seriennummer des Pico abgeleitet.
+- Identität **[E3]**: Jedes `41` wird sofort mit `91 dev model FF 05 01 01` beantwortet.
+  - Die Geräte-ID steht in der YAML in Anzeigereihenfolge, wie das Gateway sie zeigt. Für dieses Netz ist das `device_id: "14B8A5"`, im Paket `A5 B8 14`.
+  - Das Modul am Pico trägt diese ID bereits aus dem Pairing. Ein neues Pairing ist nicht nötig.
+  - Nach `D1` vergleicht die Brücke die gelernte ID im Modul (`D2` d6–d8) mit der YAML und meldet eine Abweichung als Warnung im Log und im Status.
 - Antworten auf Anfragen an die eigene Geräte-ID **[E4]**, jeweils höchstens einmal je 60 s:
 
   | Anfrage | Antwort |
@@ -101,7 +104,7 @@ Abnahme:
 - Testtaste an einem Melder ergibt einen vollständig gedeuteten `70`-Rahmen.
 - Melder vom Sockel nehmen ergibt `71` mit Flags.
 - Handabfragen liefern `D4 06`, `C4`, `C8`, `73`.
-- `D1` zeigt die eigene Geräte-ID im Feld d6–d8.
+- `D1` zeigt im Feld d6–d8 die ID aus der YAML (`A5 B8 14`), ohne Warnung.
 - Eine ID-Anfrage eines anderen Knotens an die Brücke erhält `C4`.
 
 ### Stufe 2: Melderregister und Netzerkundung
@@ -138,7 +141,7 @@ Wann erkundet wird **[E5]**, gesteuert über die YAML-Option `auto_discovery`:
 
 | | `auto_discovery: false` (Entwicklung und Test, Vorgabe) | `auto_discovery: true` (später) |
 | --- | --- | --- |
-| Start | Register aus `nodes.json` laden, dann Erkundung nur für SIDs ohne Eintrag | wie links |
+| Start | Register aus `nodes.bin` laden, dann Erkundung nur für SIDs ohne Eintrag | wie links |
 | Button „Discover Network“ | Erkundung aller SIDs, Register bleibt erhalten | wie links |
 | Periodisch | keine Abfragen | `D3 06` je SID alle 19 h, `C7` je Melder alle 24 h, über den Tag verteilt, Intervalle per YAML |
 | Ereignisgesteuert | keine Abfragen | nach `71` mit Flag 0x02: `72` und `C5`; nach `D4 04` oder `D4 09` mit unbekannter SID: Erkundung dieser SIDs |
@@ -149,19 +152,30 @@ Erreichbarkeit **[E8]**: Ein Knoten gilt als „nicht erreichbar“ nach `D4 01`
 
 Persistenz **[E7]**:
 
-- Datei `nodes.json` im LittleFS des Pico, Format angelehnt an wisafe-mm, damit Namen und Identitäten zwischen beiden Werkzeugen übertragbar sind:
+- Binärdatei `nodes.bin` im LittleFS des Pico mit fester Größe von 408 Byte: Kopf mit 8 Byte und 50 Plätze zu je 8 Byte (Netzvorgabe: höchstens 50 Knoten). Inhaltlich entspricht ein Platz den Identitätsfeldern von wisafe-mm; Namen kommen aus der YAML (E6).
 
-  ```json
-  {
-    "bridge": {
-      "14": {"name": "", "device_id": "3DE42F", "model_id": "7C04", "priority": 129, "model": "ST-630-DE"}
-    }
-  }
-  ```
+  Kopf:
 
-  Byte-Reihenfolge von `device_id` und `model_id` wie im Paket, wie bei wisafe-mm. Das W2-Modul liefert keine Mesh-ID; die oberste Ebene heißt deshalb `bridge`.
+  | Byte | Inhalt |
+  | --- | --- |
+  | 0–3 | Kennung `W2NR` |
+  | 4 | Formatversion, beginnt bei 1 |
+  | 5 | Anzahl belegter Plätze |
+  | 6–7 | CRC-16 über die 400 Byte der Plätze |
+
+  Platz:
+
+  | Byte | Inhalt |
+  | --- | --- |
+  | 0 | SID; `FF` = Platz frei |
+  | 1 | Flags: Bit 0 Gateway-RM, Bit 1 Typ unbekannt (RM ohne Melder) |
+  | 2–4 | Geräte-ID in Paket-Reihenfolge |
+  | 5–6 | Modell-ID in Paket-Reihenfolge |
+  | 7 | Klasse |
+
+- Passen Kennung, Version oder CRC nicht, startet die Brücke mit leerem Register und erkundet alle SIDs.
 - Geschrieben wird nur bei Änderung von Geräte-ID, Modell oder Klasse, gebündelt mit einer Verzögerung von einigen Sekunden.
-- Button „Rediscover Network“: löscht `nodes.json` und das Register im RAM und startet eine vollständige Erkundung.
+- Button „Rediscover Network“: löscht `nodes.bin` und das Register im RAM und startet eine vollständige Erkundung.
 
 Abnahme:
 
@@ -231,8 +245,8 @@ Ein späterer Assistent bekommt eine eigene Absicherung und eine eigene Planung,
 
 - **Host-Tests:** Jede Stufe erweitert die Tests auf dem PC. Testdaten sind die Beispielrahmen der Protokollanalyse und Mitschnitte aus dem eigenen Netz. Vorschlag: zusätzlich eine GitHub Action, die die Tests und einen ESPHome-Build ausführt.
 - **Mitschnitte:** Optional ein Debug-Schalter, der jeden Rohrahmen mit Zeitstempel loggt. Er hilft bei offenen Punkten wie `D4 10` und `D5`.
-- **Dateisystem:** Für `nodes.json` braucht der Pico ein LittleFS im Flash. Die Größe wird in der YAML über `platformio_options` festgelegt (wenige KB genügen, die kleinste Stufe reicht).
-- **Speicher:** Das Register für 64 SIDs braucht wenige KB. Entitäten für 22 Melder mit je ~13 Einträgen sind rund 290 Entitäten. Ob das mit der ESPHome-API auf dem RP2350 flüssig läuft, wird in Stufe 3 gemessen **[R6]**.
+- **Dateisystem:** Für `nodes.bin` braucht der Pico ein LittleFS im Flash. Die Größe wird in der YAML über `platformio_options` festgelegt; die kleinste Stufe reicht.
+- **Speicher:** Das Register mit 50 Plätzen braucht wenige KB. Entitäten für 22 Melder mit je ~13 Einträgen sind rund 290 Entitäten. Ob das mit der ESPHome-API auf dem RP2350 flüssig läuft, wird in Stufe 3 gemessen **[R6]**.
 - **Dokumentation:** README und Hardware-Unterlage wachsen mit jeder Stufe.
 
 ## 5. Reihenfolge
@@ -247,11 +261,11 @@ Getroffen am 11.10.2026.
 | --- | --- | --- |
 | E1 | Welche aktiven Funktionen bietet die Brücke an? | Diagnose (`C1`) und Netztest (`70`), per YAML einzeln zuschaltbar, direkt auslösbar. Alarm auslösen, Stummschalten und Alarm beenden werden nicht angeboten |
 | E2 | Init `D3 19 50 00` bei jedem Start? | Ja, ohne vorangestellte `00`. Beim nächsten Start wird mitgeschnitten, ob das Netz geflutet wird |
-| E3 | Identität der Brücke (`91` auf `41`)? | Geräte-ID aus der Pico-Seriennummer, Klasse `FF`, jedes `41` beantworten. Modell per YAML, Vorgabe `11 03` (wie Arduino-Firmware und NikNakk) |
+| E3 | Identität der Brücke (`91` auf `41`)? | Geräte-ID fest in der YAML, hier `14B8A5` (die ID, die das Modul am Pico bereits aus dem Pairing trägt). Klasse `FF`, jedes `41` beantworten. Modell per YAML, Vorgabe `11 03` (wie Arduino-Firmware und NikNakk) |
 | E4 | Antworten auf Anfragen an die eigene Geräte-ID? | Alle beantworten: `C3`→`C4`, `72`→`73`, `C7`→`C8`, `C5`→`C6`, `C1`→`C2`, mit festen Werten (keine Fehler, 3000 mV, keine Ereignisse, Diagnose bestanden) |
 | E5 | Wie oft werden Melder aus der Ferne abgefragt? | Zielbetrieb: Erkundung beim Start, `D3 06` je SID alle 19 h, `C7` je Melder alle 24 h, ereignisgesteuerte Abfragen. In Entwicklung und Test nur beim Start und auf Knopfdruck. Umschaltung über YAML `auto_discovery` |
 | E6 | Wie werden die Melder zu Entitäten? | Melder in der YAML auflisten, Vorlage aus dem Log, dazu das Register als JSON-Text-Sensor. Alles über die native API |
-| E7 | Melderregister speichern? | Ja, als `nodes.json` angelehnt an wisafe-mm, nur bei Änderung, gebündelt. Button „Rediscover Network“ löscht das Register und erkundet neu |
+| E7 | Melderregister speichern? | Ja, als Binärdatei `nodes.bin` mit festen 50 Plätzen (408 Byte), nur bei Änderung, gebündelt. Button „Rediscover Network“ löscht das Register und erkundet neu |
 | E8 | Wann gilt ein Knoten als nicht erreichbar? | Nach `D4 01` oder zwei ausbleibenden Antworten in Folge. Entfernen nur über „Rediscover Network“ |
 | E9 | Unbekannter Rahmen `D4 10 BF 7F 0E 05 00 00 00 00 14`? | Weiter mitschneiden, roh loggen, Auswertung erst bei geklärter Bedeutung |
 | E10 | Netzverändernde Befehle? | Vorerst ausgeschlossen. Ein Pairing-Assistent ist als Stufe 5 vorgemerkt |
@@ -265,15 +279,15 @@ Getroffen am 11.10.2026.
 | R1 | Fernabfragen belasten die Batterien aller Melder | in der Entwicklung keine periodischen Abfragen (E5), Start-Erkundung nur für unbekannte SIDs, Zähler für gesendete Fernanfragen als Sensor |
 | R2 | Parallele Fernanfragen gehen verloren | Sendeplanung mit genau einer offenen Fernanfrage und 500 ms Ruhe |
 | R3 | Feldbedeutungen sind teils vermutet (`50` d5, `61` SID, `D2` d12, `D4 06` d5, `71` Bit 0x80, `C6`-Ereignisse) | unsichere Felder als „roh“ ausgeben und kennzeichnen, mit Mitschnitten nachschärfen |
-| R4 | Doppelte Geräte-ID der Brücke im Netz | eigene ID per `91` (E3), Prüfung über `D1` in Stufe 1 |
-| R5 | Flash-Schreibvorgänge für `nodes.json` halten Kern 1 an, SPI-Bytes können verloren gehen | seltene, gebündelte Schreibvorgänge (E7). In Stufe 2 messen, ob das RM verlorene Bytes wiederholt. Falls nötig: Schreiben nur in Ruhephasen ohne offene Anfrage |
+| R4 | Doppelte Geräte-ID der Brücke im Netz | eigene ID aus der YAML per `91` (E3), Abgleich mit `D1` in Stufe 1 |
+| R5 | Flash-Schreibvorgänge für `nodes.bin` halten Kern 1 an, SPI-Bytes können verloren gehen | seltene, gebündelte Schreibvorgänge (E7). In Stufe 2 messen, ob das RM verlorene Bytes wiederholt. Falls nötig: Schreiben nur in Ruhephasen ohne offene Anfrage |
 | R6 | Viele Entitäten belasten API und Speicher | Messung in Stufe 3, Diagnoseentitäten optional |
 | R7 | Ein Alarm kann übersehen werden, wenn die Brücke ausfällt oder Rahmen verliert | Brücke bleibt Zusatz. Ereignisse für Alarm und Verbindung zur Brücke in Home Assistant überwachen |
 | R8 | Das eigene RM hängt nach dem Einlernen eines anderen Knotens | Watchdog: bleibt `46` mehrfach aus, Hinweis im Status. Ein automatischer Neustart des RM braucht eine schaltbare Versorgung |
 | R9 | Die Brücke wird nach dem Init zum Empfänger aller Hostantworten. Ob das andere Abfragende stört, ist offen | bei den Tests von Stufe 2 beobachten, im Zweifel E2 neu entscheiden |
-| R10 | Mit Klasse `FF` blinkt die LED des Funkmoduls vermutlich alle paar Sekunden | beobachten, rein optisch. Die Klasse ist per YAML änderbar |
-| R11 | Netztest und Diagnose lösen ohne Rückfrage aus, auch über Home-Assistant-Automationen | Funktionen standardmäßig aus, Zuschaltung bewusst per YAML, jede Auslösung im Log und als Ereignis |
-| R12 | Feste Antworten auf `72`/`C7`/`C5`/`C1` könnten andere Werkzeuge (Gateway, wisafe-mm) über den Zustand der Brücke täuschen | Werte so wählen, dass sie einem fehlerfreien Gerät entsprechen. In wisafe-mm prüfen, wie die Brücke erscheint |
+| R10 | Mit Klasse `FF` blinkt die LED des Funkmoduls vermutlich alle paar Sekunden | bekannt und beabsichtigt |
+| R11 | Netztest und Diagnose lösen ohne Rückfrage aus, auch über Home-Assistant-Automationen | bekannt und beabsichtigt; Funktionen per YAML zuschaltbar, jede Auslösung im Log und als Ereignis |
+| R12 | Feste Antworten auf `72`/`C7`/`C5`/`C1` könnten andere Werkzeuge (Gateway, wisafe-mm) über den Zustand der Brücke täuschen | bekannt und beabsichtigt; die Werte entsprechen einem fehlerfreien Gerät |
 
 ## 8. Nächster Schritt
 
