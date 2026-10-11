@@ -8,6 +8,7 @@
 #include "esphome/core/log.h"
 
 #include <cstdio>
+#include <cstring>
 
 namespace esphome {
 namespace wisafe2 {
@@ -22,6 +23,9 @@ static constexpr uint8_t SID_MAP_REPLY[] = {MSG_RM_REPORT, 0x03};
 // Gibt Log-Clients nach dem WLAN-Aufbau Zeit, sich zu verbinden.
 static constexpr uint32_t MODULE_START_DELAY_MS = 5000;
 static constexpr int INIT_ATTEMPTS = 50;
+// Nach der Quittung des Inits nimmt das Modul keine Bytes an, bis es D4 10 gemeldet hat (etwa 3 s).
+static constexpr uint8_t INIT_REPORT_PREFIX[] = {MSG_RM_REPORT, 0x10};
+static constexpr uint32_t INIT_REPORT_TIMEOUT_MS = 10000;
 
 static const char *const STATUS_WAIT_NETWORK = "warte auf WLAN";
 static const char *const STATUS_INIT = "Init läuft";
@@ -72,6 +76,7 @@ void WiSafe2Component::enqueue_(const Request &request) {
 
 void WiSafe2Component::enqueue_init_() {
   this->init_pending_ = true;
+  this->await_init_report_ = false;
   this->init_attempt_++;
   this->publish_status_(STATUS_INIT);
   this->enqueue_(Request::remote(TAG_INIT, INIT_PAYLOAD, sizeof(INIT_PAYLOAD)));
@@ -96,15 +101,21 @@ void WiSafe2Component::query_sid_map() {
   this->enqueue_(Request::local(TAG_SID_MAP, SID_MAP_PAYLOAD, sizeof(SID_MAP_PAYLOAD), SID_MAP_REPLY, sizeof(SID_MAP_REPLY)));
 }
 
+void WiSafe2Component::query_after_init_() {
+  this->await_init_report_ = false;
+  this->query_rm_status();
+  this->query_sid_map();
+}
+
 void WiSafe2Component::handle_completion_(const Completion &completion) {
   switch (completion.request.tag) {
     case TAG_INIT:
       this->init_pending_ = false;
       if (completion.outcome == Outcome::Ok) {
-        ESP_LOGI(TAG, "Init quittiert nach %d Versuch(en)", this->init_attempt_);
+        ESP_LOGI(TAG, "Init quittiert nach %d Versuch(en), warte auf D4 10", this->init_attempt_);
         this->publish_status_(STATUS_READY);
-        this->query_rm_status();
-        this->query_sid_map();
+        this->await_init_report_ = true;
+        this->init_report_deadline_ms_ = millis() + INIT_REPORT_TIMEOUT_MS;
       } else if (this->init_attempt_ < INIT_ATTEMPTS) {
         ESP_LOGD(TAG, "Init %s, Versuch %d/%d", outcome_name(completion.outcome), this->init_attempt_,
                  INIT_ATTEMPTS);
@@ -147,6 +158,12 @@ void WiSafe2Component::handle_frame_(const Frame &frame, uint32_t now) {
   }
 
   this->scheduler_.on_frame(frame, now);
+
+  if (this->await_init_report_ && frame.status == FrameStatus::Complete &&
+      frame.len >= sizeof(INIT_REPORT_PREFIX) &&
+      std::memcmp(frame.data, INIT_REPORT_PREFIX, sizeof(INIT_REPORT_PREFIX)) == 0) {
+    this->query_after_init_();
+  }
 }
 
 void WiSafe2Component::setup() {
@@ -203,6 +220,10 @@ void WiSafe2Component::loop() {
       }
       break;
     case StartState::Running:
+      if (this->await_init_report_ && static_cast<int32_t>(now - this->init_report_deadline_ms_) >= 0) {
+        ESP_LOGW(TAG, "Kein D4 10 nach dem Init, frage trotzdem ab");
+        this->query_after_init_();
+      }
       this->scheduler_.service(now, this->decoder_.open());
       break;
   }

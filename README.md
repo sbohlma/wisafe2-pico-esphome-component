@@ -8,7 +8,7 @@ Die zertifizierten Melder bleiben die Sicherheitsanlage. Diese Brücke hört im 
 
 Umgesetzt ist Stufe 0 des [Umsetzungsplans](doc/Protokoll-Umsetzungsplan.md): Rahmenschicht, Maskierung und Sendeplanung.
 
-Beim Start hält Kern 1 nur IRQ auf Low. Die Kommunikation mit dem Modul beginnt erst, wenn ESPHome hochgefahren und das WLAN verbunden ist. 5 s danach, damit sich Log-Clients verbinden können, fordert Kern 0 die Einrichtung des SPI-Slaves an und sendet den Init-Befehl `D3 19 50 00`. Ohne Quittung `46` wiederholt Kern 0 den Befehl bis zu 50-mal im Abstand von etwa 0,5 s. Nach der Quittung fragt Kern 0 den Status des eigenen Funkmoduls (`D1`) und die lokale SID-Map (`D3 03`) ab. Beides sind lokale Abfragen ohne Funkverkehr. Der Button `init_button` startet den Init jederzeit neu.
+Beim Start hält Kern 1 nur IRQ auf Low. Die Kommunikation mit dem Modul beginnt erst, wenn ESPHome hochgefahren und das WLAN verbunden ist. 5 s danach, damit sich Log-Clients verbinden können, fordert Kern 0 die Einrichtung des SPI-Slaves an und sendet den Init-Befehl `D3 19 50 00`. Ohne Quittung `46` wiederholt Kern 0 den Befehl bis zu 50-mal im Abstand von etwa 0,5 s. Nach der Quittung meldet das Modul nach etwa 3 s `D4 10` und nimmt bis dahin keine Bytes an. Kern 0 wartet auf diesen Rahmen, höchstens 10 s, und fragt danach den Status des eigenen Funkmoduls (`D1`) und die lokale SID-Map (`D3 03`) ab. Beides sind lokale Abfragen ohne Funkverkehr. Der Button `init_button` startet den Init jederzeit neu.
 
 Kern 1 ist SPI-Slave und quittiert jedes empfangene Byte mit einem IRQ-Puls von 8 µs. Auf MISO liegt im Empfang `0x00`. Die empfangenen Bytes gehen über eine Warteschlange nach Kern 0.
 
@@ -30,7 +30,7 @@ Die Sendeplanung auf Kern 0 schickt höchstens einen Befehl gleichzeitig und hä
 
 Kern 1 sendet die Bytes eines Befehls direkt hintereinander, bis zu 32 Bytes, und meldet danach zurück, ob alle Bytes abgenommen wurden. Ein Byte zum Modul hält IRQ für die Dauer dieses Bytes auf High. Beginnt das Modul innerhalb von 5 ms nicht zu takten, bricht Kern 1 den Befehl ab und meldet den Grund.
 
-Nach dem Init nimmt das Modul einige Sekunden lang keine Bytes an. Ein Befehl, von dem noch kein Byte hinausging, wird deshalb bis zu 20-mal im Abstand von mindestens 500 ms wiederholt. Bricht ein Befehl nach dem ersten Byte ab, gilt er sofort als nicht gesendet.
+Ein Befehl, von dem noch kein Byte hinausging, etwa ein Button-Druck direkt nach dem Init, wird bis zu 20-mal im Abstand von mindestens 500 ms wiederholt. Bricht ein Befehl nach dem ersten Byte ab, gilt er sofort als nicht gesendet.
 
 ## Hardware
 

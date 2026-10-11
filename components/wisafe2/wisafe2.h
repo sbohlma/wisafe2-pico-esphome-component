@@ -35,6 +35,7 @@ class WiSafe2Component : public Component, public Transport {
 
   void start_module_();
   void enqueue_init_();
+  void query_after_init_();
   void enqueue_(const Request &request);
   void handle_frame_(const Frame &frame, uint32_t now);
   void handle_completion_(const Completion &completion);
@@ -52,6 +53,8 @@ class WiSafe2Component : public Component, public Transport {
   uint32_t settle_since_ms_{0};
   bool init_pending_{false};
   int init_attempt_{0};
+  bool await_init_report_{false};
+  uint32_t init_report_deadline_ms_{0};
 };
 
 }  // namespace wisafe2
