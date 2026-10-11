@@ -18,5 +18,15 @@ class WiSafe2SpiButton : public button::Button {
   void press_action() override { ipc::request_spi_setup(); }
 };
 
+class WiSafe2RmStatusButton : public button::Button, public Parented<WiSafe2Component> {
+ protected:
+  void press_action() override { this->parent_->query_rm_status(); }
+};
+
+class WiSafe2SidMapButton : public button::Button, public Parented<WiSafe2Component> {
+ protected:
+  void press_action() override { this->parent_->query_sid_map(); }
+};
+
 }  // namespace wisafe2
 }  // namespace esphome

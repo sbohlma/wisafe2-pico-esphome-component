@@ -2,49 +2,57 @@
 
 #include "core_ipc.h"
 #include "frame_analyzer.h"
+#include "messages.h"
 #include "esphome/components/network/util.h"
 #include "esphome/core/hal.h"
 #include "esphome/core/log.h"
+
+#include <cstdio>
 
 namespace esphome {
 namespace wisafe2 {
 
 static const char *const TAG = "wisafe2";
-static constexpr uint32_t FRAME_GAP_MS = 80;
 
-static constexpr uint8_t INIT_COMMAND[] = {0xD3, 0x19, 0x50, 0x00, 0x7E};
+static constexpr uint8_t INIT_PAYLOAD[] = {0xD3, 0x19, 0x50, 0x00};
+static constexpr uint8_t RM_STATUS_PAYLOAD[] = {0xD1};
+static constexpr uint8_t RM_STATUS_REPLY[] = {MSG_RM_STATUS};
+static constexpr uint8_t SID_MAP_PAYLOAD[] = {0xD3, 0x03};
+static constexpr uint8_t SID_MAP_REPLY[] = {MSG_RM_REPORT, 0x03};
 // Gibt Log-Clients nach dem WLAN-Aufbau Zeit, sich zu verbinden.
 static constexpr uint32_t MODULE_START_DELAY_MS = 5000;
-static constexpr uint32_t INIT_SENT_TIMEOUT_MS = 1000;
-static constexpr uint32_t INIT_REPLY_MS = 125;
-static constexpr uint32_t INIT_PAUSE_MS = 500;
 static constexpr int INIT_ATTEMPTS = 50;
 
-void WiSafe2Component::emit_frame_(bool complete) {
-  if (this->frame_len_ == 0) {
-    this->frame_open_ = false;
+static const char *const STATUS_WAIT_NETWORK = "warte auf WLAN";
+static const char *const STATUS_INIT = "Init läuft";
+static const char *const STATUS_READY = "Modul bereit";
+static const char *const STATUS_NO_REPLY = "keine Antwort";
+static const char *const STATUS_UNPAIRED = "ungekoppelt";
+
+void WiSafe2Component::publish_status_(const char *status) {
+  if (this->status_ == status) {
     return;
   }
-  if (complete && this->frame_len_ == 2 && this->frame_[0] == 0x46 &&
-      (this->init_state_ == InitState::AwaitSent || this->init_state_ == InitState::AwaitReply ||
-       this->init_state_ == InitState::Pause)) {
-    this->init_state_ = InitState::Done;
+  this->status_ = status;
+  ESP_LOGI(TAG, "Status: %s", status);
+  if (this->status_sensor_ != nullptr) {
+    this->status_sensor_->publish_state(status);
   }
-  char text[192];
-  describe_frame(this->frame_, this->frame_len_, complete, text, sizeof(text));
-  ESP_LOGI(TAG, "%s", text);
-  this->frame_len_ = 0;
-  this->frame_open_ = false;
 }
 
-bool WiSafe2Component::send_command(const uint8_t *bytes, size_t len, uint8_t *id) {
+bool WiSafe2Component::send_bytes(const uint8_t *bytes, size_t len, uint8_t &id) {
   const uint8_t command_id = ++this->next_command_id_;
   if (!ipc::send_command(command_id, bytes, len)) {
     return false;
   }
-  if (id != nullptr) {
-    *id = command_id;
+  id = command_id;
+  char text[ipc::Command::MAX_LEN * 3 + 1];
+  size_t used = 0;
+  for (size_t index = 0; index < len && used + 4 <= sizeof(text); ++index) {
+    used += std::snprintf(text + used, sizeof(text) - used, index == 0 ? "%02X" : " %02X", bytes[index]);
   }
+  text[used] = '\0';
+  ESP_LOGD(TAG, "Sende %s", text);
   return true;
 }
 
@@ -53,71 +61,96 @@ void WiSafe2Component::start_module_() {
     ipc::request_spi_setup();
     this->module_started_ = true;
   }
+  this->start_state_ = StartState::Running;
+}
+
+void WiSafe2Component::enqueue_(const Request &request) {
+  if (!this->scheduler_.enqueue(request)) {
+    ESP_LOGW(TAG, "Warteschlange voll, Befehl %02X verworfen", request.payload[0]);
+  }
+}
+
+void WiSafe2Component::enqueue_init_() {
+  this->init_pending_ = true;
+  this->init_attempt_++;
+  this->publish_status_(STATUS_INIT);
+  this->enqueue_(Request::remote(TAG_INIT, INIT_PAYLOAD, sizeof(INIT_PAYLOAD)));
 }
 
 void WiSafe2Component::start_init() {
   this->start_module_();
   this->init_attempt_ = 0;
-  if (this->init_state_ != InitState::AwaitSent) {
-    this->init_state_ = InitState::Send;
+  if (!this->init_pending_) {
+    this->enqueue_init_();
   }
 }
 
-void WiSafe2Component::handle_command_result_(uint8_t id, bool ok) {
-  if (this->init_state_ == InitState::AwaitSent && id == this->init_command_id_) {
-    this->init_state_ = ok ? InitState::AwaitReply : InitState::Pause;
-    this->init_mark_ms_ = millis();
+void WiSafe2Component::query_rm_status() {
+  this->start_module_();
+  this->enqueue_(
+      Request::local(TAG_RM_STATUS, RM_STATUS_PAYLOAD, sizeof(RM_STATUS_PAYLOAD), RM_STATUS_REPLY, sizeof(RM_STATUS_REPLY)));
+}
+
+void WiSafe2Component::query_sid_map() {
+  this->start_module_();
+  this->enqueue_(Request::local(TAG_SID_MAP, SID_MAP_PAYLOAD, sizeof(SID_MAP_PAYLOAD), SID_MAP_REPLY, sizeof(SID_MAP_REPLY)));
+}
+
+void WiSafe2Component::handle_completion_(const Completion &completion) {
+  switch (completion.request.tag) {
+    case TAG_INIT:
+      this->init_pending_ = false;
+      if (completion.outcome == Outcome::Ok) {
+        ESP_LOGI(TAG, "Init quittiert nach %d Versuch(en)", this->init_attempt_);
+        this->publish_status_(STATUS_READY);
+        this->query_rm_status();
+        this->query_sid_map();
+      } else if (this->init_attempt_ < INIT_ATTEMPTS) {
+        ESP_LOGD(TAG, "Init %s, Versuch %d/%d", outcome_name(completion.outcome), this->init_attempt_,
+                 INIT_ATTEMPTS);
+        this->enqueue_init_();
+      } else {
+        ESP_LOGW(TAG, "Init nach %d Versuchen ohne Quittung", INIT_ATTEMPTS);
+        this->publish_status_(STATUS_NO_REPLY);
+      }
+      break;
+    case TAG_RM_STATUS:
+      if (completion.outcome != Outcome::Ok) {
+        ESP_LOGW(TAG, "D1 (RM-Status): %s", outcome_name(completion.outcome));
+      }
+      break;
+    case TAG_SID_MAP:
+      if (completion.outcome != Outcome::Ok) {
+        ESP_LOGW(TAG, "D3 03 (SID-Map): %s", outcome_name(completion.outcome));
+      }
+      break;
+    default:
+      break;
   }
 }
 
-void WiSafe2Component::service_init_() {
-  const uint32_t now = millis();
-  switch (this->init_state_) {
-    case InitState::WaitNetwork:
-      if (network::is_connected()) {
-        this->init_state_ = InitState::Settle;
-        this->init_mark_ms_ = now;
-      }
-      break;
-    case InitState::Settle:
-      if (now - this->init_mark_ms_ >= MODULE_START_DELAY_MS) {
-        this->start_module_();
-        this->init_state_ = InitState::Send;
-      }
-      break;
-    case InitState::Send:
-      if (this->send_command(INIT_COMMAND, sizeof(INIT_COMMAND), &this->init_command_id_)) {
-        this->init_state_ = InitState::AwaitSent;
-        this->init_mark_ms_ = now;
-      }
-      break;
-    case InitState::AwaitSent:
-      if (now - this->init_mark_ms_ >= INIT_SENT_TIMEOUT_MS) {
-        this->init_state_ = InitState::Pause;
-        this->init_mark_ms_ = now;
-      }
-      break;
-    case InitState::AwaitReply:
-      if (now - this->init_mark_ms_ >= INIT_REPLY_MS) {
-        this->init_state_ = InitState::Pause;
-        this->init_mark_ms_ = now;
-      }
-      break;
-    case InitState::Pause:
-      if (now - this->init_mark_ms_ >= INIT_PAUSE_MS) {
-        this->init_state_ = ++this->init_attempt_ >= INIT_ATTEMPTS ? InitState::Done : InitState::Send;
-      }
-      break;
-    case InitState::Done:
-      break;
+void WiSafe2Component::handle_frame_(const Frame &frame, uint32_t now) {
+  char text[256];
+  describe_frame(frame, text, sizeof(text));
+  ESP_LOGI(TAG, "%s", text);
+
+  // D2 kommt auch unaufgefordert etwa stündlich.
+  LocalMessage msg;
+  if (parse_local(frame, msg)) {
+    if (msg.type == LocalType::RmStatus) {
+      this->publish_status_(msg.sid == SID_UNPAIRED ? STATUS_UNPAIRED : STATUS_READY);
+    } else if (msg.type == LocalType::LocalSidMap) {
+      this->publish_status_(msg.map == 0 ? STATUS_UNPAIRED : STATUS_READY);
+    }
   }
+
+  this->scheduler_.on_frame(frame, now);
 }
 
 void WiSafe2Component::setup() {
+  this->scheduler_.set_handler([this](const Completion &completion) { this->handle_completion_(completion); });
   ESP_LOGI(TAG, "Modulstart nach WLAN-Verbindung");
-  if (this->status_sensor_ != nullptr) {
-    this->status_sensor_->publish_state("bereit");
-  }
+  this->publish_status_(STATUS_WAIT_NETWORK);
 }
 
 void WiSafe2Component::loop() {
@@ -130,36 +163,51 @@ void WiSafe2Component::loop() {
     ESP_LOGW(TAG, "Kern 1: %u Logzeilen verworfen", dropped);
   }
 
+  uint32_t now = millis();
   ipc::CommandResult result{};
   while (ipc::poll_command_result(result)) {
-    this->handle_command_result_(result.id, result.ok);
+    if (!result.ok) {
+      ESP_LOGW(TAG, "Kern 1: Befehl nach %u Bytes abgebrochen", static_cast<unsigned>(result.sent));
+    }
+    this->scheduler_.on_send_result(result.id, result.ok, now);
   }
 
+  Frame frame;
   uint8_t byte = 0;
   while (ipc::poll_spi_byte(byte)) {
-    if (this->frame_len_ >= sizeof(this->frame_)) {
-      this->emit_frame_(false);
-    }
-    this->frame_[this->frame_len_++] = byte;
-    this->last_byte_ms_ = millis();
-    this->frame_open_ = true;
-    if (byte == 0x7E) {
-      this->emit_frame_(true);
+    now = millis();
+    if (this->decoder_.feed(byte, now, frame)) {
+      this->handle_frame_(frame, now);
     }
   }
-
-  if (this->frame_open_ && static_cast<int32_t>(millis() - this->last_byte_ms_) >= static_cast<int32_t>(FRAME_GAP_MS)) {
-    this->emit_frame_(false);
+  now = millis();
+  if (this->decoder_.poll_timeout(now, frame)) {
+    this->handle_frame_(frame, now);
   }
 
-  this->service_init_();
+  switch (this->start_state_) {
+    case StartState::WaitNetwork:
+      if (network::is_connected()) {
+        this->start_state_ = StartState::Settle;
+        this->settle_since_ms_ = now;
+      }
+      break;
+    case StartState::Settle:
+      if (now - this->settle_since_ms_ >= MODULE_START_DELAY_MS) {
+        this->start_init();
+      }
+      break;
+    case StartState::Running:
+      this->scheduler_.service(now, this->decoder_.open());
+      break;
+  }
 }
 
 void WiSafe2Component::dump_config() {
   ESP_LOGCONFIG(TAG, "WiSafe2:");
   LOG_TEXT_SENSOR("  ", "Status", this->status_sensor_);
   ESP_LOGCONFIG(TAG, "  SPI-Slave Kern 1: GP16 MOSI, GP17 CS, GP18 SCK, GP19 MISO, GP20 IRQ");
-  ESP_LOGCONFIG(TAG, "  Empfang mit IRQ-Quittung 8 us, Befehle von Kern 0, Init D3 19 50 00 7E");
+  ESP_LOGCONFIG(TAG, "  Rahmen maskiert, 500 ms Ruhe zwischen Befehlen, Init D3 19 50 00");
 }
 
 }  // namespace wisafe2
