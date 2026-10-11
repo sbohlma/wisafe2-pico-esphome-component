@@ -8,9 +8,11 @@ AUTO_LOAD = ["button", "text_sensor"]
 wisafe2_ns = cg.esphome_ns.namespace("wisafe2")
 WiSafe2Component = wisafe2_ns.class_("WiSafe2Component", cg.Component)
 WiSafe2InitButton = wisafe2_ns.class_("WiSafe2InitButton", button.Button)
+WiSafe2SpiButton = wisafe2_ns.class_("WiSafe2SpiButton", button.Button)
 
 CONF_STATUS = "status"
 CONF_INIT_BUTTON = "init_button"
+CONF_SPI_BUTTON = "spi_button"
 
 CONFIG_SCHEMA = cv.Schema(
     {
@@ -20,6 +22,11 @@ CONFIG_SCHEMA = cv.Schema(
             WiSafe2InitButton,
             entity_category=ENTITY_CATEGORY_CONFIG,
             icon="mdi:radio-tower",
+        ),
+        cv.Optional(CONF_SPI_BUTTON): button.button_schema(
+            WiSafe2SpiButton,
+            entity_category=ENTITY_CATEGORY_CONFIG,
+            icon="mdi:restart",
         ),
     }
 ).extend(cv.COMPONENT_SCHEMA)
@@ -34,3 +41,5 @@ async def to_code(config):
         cg.add(var.set_status_sensor(sens))
     if CONF_INIT_BUTTON in config:
         await button.new_button(config[CONF_INIT_BUTTON])
+    if CONF_SPI_BUTTON in config:
+        await button.new_button(config[CONF_SPI_BUTTON])

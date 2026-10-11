@@ -39,9 +39,13 @@ wisafe2:
     name: "WiSafe2 Status"
   init_button:
     name: "WiSafe2 Init senden"
+  spi_button:
+    name: "WiSafe2 SPI neu starten"
 ```
 
-Der Ordner `components/wisafe2` wird darüber geladen. Der Status-Sensor meldet `bereit`. Beide Einträge sind optional.
+Der Ordner `components/wisafe2` wird darüber geladen. Der Status-Sensor meldet `bereit`. Alle Einträge sind optional.
+
+`spi_button` richtet SPI-Slave und IRQ auf Kern 1 neu ein, zum Testen. Danach steht im Log `SPI-Slave gestartet, CS …, SCK …, MOSI …` mit den gelesenen Pegeln. Im Ruhezustand sind CS High und SCK Low.
 
 Der Init-Ablauf beim Start ist nach etwa 30 s abgeschlossen. Über WLAN verbindet sich der Log-Client oft erst danach. Zum Prüfen deshalb das Log öffnen und dann `WiSafe2 Init senden` drücken. Ein Druck sendet den Befehl bis zu 50-mal im Abstand von etwa 0,5 s und hört bei `46 7E` auf.
 

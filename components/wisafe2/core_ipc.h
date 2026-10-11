@@ -74,6 +74,9 @@ bool poll_spi_byte(uint8_t &byte);
 // Kern 0 fordert an, Kern 1 startet den Init-Ablauf neu, sobald kein Byte zum Modul unterwegs ist.
 void request_init();
 
+// Ebenso: Kern 1 richtet SPI-Slave und IRQ neu ein und meldet die Pegel von CS, SCK und MOSI.
+void request_spi_setup();
+
 }  // namespace ipc
 }  // namespace wisafe2
 }  // namespace esphome

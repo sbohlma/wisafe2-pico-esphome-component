@@ -8,6 +8,8 @@
 #include "hardware/timer.h"
 #include "pico/platform.h"
 
+#include <cstdio>
+
 namespace esphome {
 namespace wisafe2 {
 namespace ipc {
@@ -16,6 +18,7 @@ SpscQueue<LogMessage, 8> core1_logs;
 SpscQueue<uint8_t, 256> spi_bytes;
 std::atomic<uint32_t> dropped_logs{0};
 std::atomic<bool> init_requested{false};
+std::atomic<bool> spi_setup_requested{false};
 
 bool core1_log(const char *message) {
   LogMessage slot{};
@@ -44,6 +47,8 @@ uint32_t take_dropped_logs() { return dropped_logs.exchange(0, std::memory_order
 bool poll_spi_byte(uint8_t &byte) { return spi_bytes.pop(byte); }
 
 void request_init() { init_requested.store(true, std::memory_order_release); }
+
+void request_spi_setup() { spi_setup_requested.store(true, std::memory_order_release); }
 
 }  // namespace ipc
 }  // namespace wisafe2
@@ -274,11 +279,9 @@ void __not_in_flash_func(poll_faults)() {
   }
 }
 
-}  // namespace
+const char *level_name(unsigned int pin) { return gpio_get(pin) ? "High" : "Low"; }
 
-bool core1_separate_stack = true;
-
-void setup1() {
+void spi_slave_setup() {
   gpio_init(PIN_IRQ);
   gpio_set_dir(PIN_IRQ, GPIO_OUT);
   gpio_put(PIN_IRQ, false);
@@ -289,13 +292,30 @@ void setup1() {
   gpio_set_function(PIN_SCK, GPIO_FUNC_SPI);
   gpio_set_function(PIN_MISO_TO_RADIO, GPIO_FUNC_SPI);
   last_cs = gpio_get(PIN_CS);
+  have_byte = false;
+
+  char text[esphome::wisafe2::ipc::LogMessage::TEXT_LEN];
+  std::snprintf(text, sizeof(text), "SPI-Slave gestartet, CS %s, SCK %s, MOSI %s", level_name(PIN_CS),
+                level_name(PIN_SCK), level_name(PIN_MOSI_FROM_RADIO));
+  esphome::wisafe2::ipc::core1_log(text);
+}
+
+}  // namespace
+
+bool core1_separate_stack = true;
+
+void setup1() {
+  spi_slave_setup();
   init_phase = InitPhase::Settle;
   init_mark_us = timer_hw->timerawl;
   init_attempt = 0;
-  esphome::wisafe2::ipc::core1_log("SPI-Slave gestartet");
 }
 
 void __not_in_flash_func(loop1)() {
+  if (init_phase != InitPhase::Sending &&
+      esphome::wisafe2::ipc::spi_setup_requested.exchange(false, std::memory_order_acquire)) {
+    spi_slave_setup();
+  }
   if (init_phase != InitPhase::Sending) {
     sniff_poll();
   }
