@@ -6,7 +6,7 @@ Die zertifizierten Melder bleiben die Sicherheitsanlage. Diese Brücke hört im 
 
 ## Stand
 
-Nach dem Start sendet Kern 1 den Init-Befehl `D3 19 50 00 7E`. Die erwartete Antwort `46 7E` erscheint im Log als `Antwort bereit 46 7E`. Danach bleibt die Komponente im Empfang.
+Nach dem Start sendet Kern 1 den Init-Befehl `D3 19 50 00 7E`. Die erwartete Antwort `46 7E` erscheint im Log als `Antwort bereit 46 7E`. Danach bleibt die Komponente im Empfang. Der Button `init_button` startet denselben Ablauf jederzeit neu, ohne die Wartezeit von 5 s.
 
 Kern 1 ist SPI-Slave, legt IRQ beim Start auf Low und quittiert jedes empfangene Byte mit einem IRQ-Puls von 8 µs. Auf MISO liegt im Empfang `0x00`. Ein Byte zum Modul hält IRQ für die Dauer dieses Bytes auf High. Die Bytes gehen über eine Warteschlange nach Kern 0. Dort werden Rahmen bis `7E` erkannt und ins Log geschrieben.
 
@@ -37,9 +37,13 @@ external_components:
 wisafe2:
   status:
     name: "WiSafe2 Status"
+  init_button:
+    name: "WiSafe2 Init senden"
 ```
 
-Der Ordner `components/wisafe2` wird darüber geladen. Der Status-Sensor meldet `bereit`.
+Der Ordner `components/wisafe2` wird darüber geladen. Der Status-Sensor meldet `bereit`. Beide Einträge sind optional.
+
+Der Init-Ablauf beim Start ist nach etwa 30 s abgeschlossen. Über WLAN verbindet sich der Log-Client oft erst danach. Zum Prüfen deshalb das Log öffnen und dann `WiSafe2 Init senden` drücken. Ein Druck sendet den Befehl bis zu 50-mal im Abstand von etwa 0,5 s und hört bei `46 7E` auf.
 
 ## Log
 

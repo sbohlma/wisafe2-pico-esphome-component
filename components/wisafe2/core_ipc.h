@@ -71,6 +71,9 @@ uint32_t take_dropped_logs();
 // SPI-Bytes: Kern 1 schreibt, Kern 0 liest.
 bool poll_spi_byte(uint8_t &byte);
 
+// Kern 0 fordert an, Kern 1 startet den Init-Ablauf neu, sobald kein Byte zum Modul unterwegs ist.
+void request_init();
+
 }  // namespace ipc
 }  // namespace wisafe2
 }  // namespace esphome

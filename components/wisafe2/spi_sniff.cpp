@@ -15,6 +15,7 @@ namespace ipc {
 SpscQueue<LogMessage, 8> core1_logs;
 SpscQueue<uint8_t, 256> spi_bytes;
 std::atomic<uint32_t> dropped_logs{0};
+std::atomic<bool> init_requested{false};
 
 bool core1_log(const char *message) {
   LogMessage slot{};
@@ -41,6 +42,8 @@ bool poll_core1_log(char *out, size_t out_len) {
 uint32_t take_dropped_logs() { return dropped_logs.exchange(0, std::memory_order_relaxed); }
 
 bool poll_spi_byte(uint8_t &byte) { return spi_bytes.pop(byte); }
+
+void request_init() { init_requested.store(true, std::memory_order_release); }
 
 }  // namespace ipc
 }  // namespace wisafe2
@@ -209,6 +212,14 @@ bool __not_in_flash_func(write_byte_to_radio)(uint8_t byte) {
 
 void __not_in_flash_func(service_init)() {
   const uint32_t now = timer_hw->timerawl;
+  if (init_phase != InitPhase::Sending &&
+      esphome::wisafe2::ipc::init_requested.exchange(false, std::memory_order_acquire)) {
+    init_attempt = 0;
+    init_tx_index = 0;
+    init_saw_46 = false;
+    init_phase = InitPhase::Sending;
+    return;
+  }
   if (init_phase == InitPhase::Done) {
     return;
   }
