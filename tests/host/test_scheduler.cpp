@@ -297,6 +297,57 @@ void test_remote_reply_timeout() {
   CHECK(f.results[0].outcome == Outcome::Timeout);
 }
 
+void test_unreachable() {
+  Fixture f;
+  f.scheduler.enqueue(
+      Request::remote(1, REMOTE_STATUS, sizeof(REMOTE_STATUS), REMOTE_STATUS_PREFIX, 3).to_sid(5));
+  f.scheduler.service(f.now, false);
+  f.sent_ok();
+  f.frame({0x46});
+  // D4 01 nach D3 04 und D4 01 für eine andere SID beenden die Anfrage nicht.
+  f.frame({0xD4, 0x01, 0x04, 0x20, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00});
+  f.frame({0xD4, 0x01, 0x00, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00});
+  CHECK(f.scheduler.remote_open());
+  f.frame({0xD4, 0x01, 0x00, 0x20, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00});
+  CHECK(!f.scheduler.remote_open());
+  CHECK_EQ(f.results.size(), 1);
+  CHECK(f.results[0].outcome == Outcome::Unreachable);
+  CHECK(!f.results[0].has_reply);
+}
+
+void test_reply_from_sid() {
+  Fixture f;
+  const uint8_t identity_query[] = {0xD3, 0x06, 0x05, 0x01};
+  const uint8_t c4[] = {0xC4};
+  f.scheduler.enqueue(Request::remote(1, identity_query, sizeof(identity_query), c4, 1).from_sid(5).to_sid(5));
+  f.scheduler.service(f.now, false);
+  f.sent_ok();
+  f.frame({0x46});
+  // Kopie einer C4 auf die Anfrage eines anderen Knotens.
+  f.frame({0xC4, 0xA5, 0xB8, 0x13, 0xFF, 0x11, 0x03, 0x10, 0x02});
+  CHECK(f.scheduler.remote_open());
+  f.frame({0xC4, 0x08, 0x2F, 0x13, 0x82, 0x11, 0x04, 0x05, 0x03});
+  CHECK(!f.scheduler.remote_open());
+  CHECK_EQ(f.results.size(), 1);
+  CHECK(f.results[0].outcome == Outcome::Ok);
+  CHECK_EQ(f.results[0].reply_first, 0xC4);
+}
+
+void test_reply_by_device() {
+  Fixture f;
+  const uint8_t battery_query[] = {0xC7, 0xDC, 0xF0, 0x33, 0x7C, 0x04, 0x06};
+  const uint8_t c8[] = {0xC8, 0xDC, 0xF0, 0x33};
+  f.scheduler.enqueue(Request::remote(1, battery_query, sizeof(battery_query), c8, sizeof(c8)));
+  f.scheduler.service(f.now, false);
+  f.sent_ok();
+  f.frame({0x46});
+  f.frame({0xC8, 0xDC, 0xF0, 0x34, 0x06, 0x8A, 0x0B, 0x00, 0x00, 0x0C, 0x0D});
+  CHECK(f.scheduler.remote_open());
+  f.frame({0xC8, 0xDC, 0xF0, 0x33, 0x06, 0x8A, 0x0B, 0x00, 0x00, 0x0B, 0x0D});
+  CHECK(!f.scheduler.remote_open());
+  CHECK(f.results[0].outcome == Outcome::Ok);
+}
+
 void test_host_reply_priority() {
   Fixture f;
   f.scheduler.enqueue(Request::local(1, D1, 1, D2_PREFIX, 1));
@@ -365,6 +416,9 @@ void run_scheduler_tests() {
   test_local_timeout_ignores_other_frames();
   test_single_open_remote();
   test_remote_reply_timeout();
+  test_unreachable();
+  test_reply_from_sid();
+  test_reply_by_device();
   test_host_reply_priority();
   test_masking_on_send();
   test_waits_while_receiving();

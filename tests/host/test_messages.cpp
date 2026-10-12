@@ -82,8 +82,33 @@ void test_rm_reports() {
   format_device_id(msg.device_id, id, sizeof(id));
   CHECK(std::strcmp(id, "354D5F") == 0);
 
-  // Am eigenen Modul beobachtet, Untertyp unbekannt.
-  CHECK(!parse_local(make_frame({0xD4, 0x10, 0xBF, 0x7F, 0x0E, 0x05, 0x00, 0x00, 0x00, 0x00, 0x14}), msg));
+  // Nach dem Init am eigenen Modul: antwortende Knoten und eigene SID 20.
+  CHECK(parse_local(make_frame({0xD4, 0x10, 0xFD, 0x7F, 0x0E, 0x05, 0x00, 0x00, 0x00, 0x00, 0x14}), msg));
+  CHECK(msg.type == LocalType::InitReport);
+  CHECK_EQ(msg.sid, 20);
+  CHECK_EQ(count_sids(msg.map), 19);
+  CHECK((msg.map & (1ull << 1)) == 0);
+  CHECK((msg.map & (1ull << 16)) == 0);
+  CHECK((msg.map & (1ull << 17)) != 0);
+  CHECK(!parse_local(make_frame({0xD4, 0x10, 0xFD, 0x7F}), msg));
+
+  CHECK(!parse_local(make_frame({0xD4, 0x12, 0x00}), msg));
+}
+
+void test_device_id_text() {
+  uint8_t id[3];
+  CHECK(parse_device_id("14B8A5", id));
+  CHECK_EQ(id[0], 0xA5);
+  CHECK_EQ(id[1], 0xB8);
+  CHECK_EQ(id[2], 0x14);
+  CHECK(parse_device_id("2fe43d", id));
+  CHECK_EQ(id[0], 0x3D);
+  CHECK(!parse_device_id("14B8A", id));
+  CHECK(!parse_device_id("14B8AG", id));
+  CHECK(!parse_device_id(nullptr, id));
+  char text[8];
+  format_device_id(id, text, sizeof(text));
+  CHECK(std::strcmp(text, "2FE43D") == 0);
 }
 
 void test_battery() {
@@ -113,12 +138,18 @@ void test_describe() {
   CHECK_STR_CONTAINS(text, "3 Knoten (0, 5, 14)");
 
   describe_frame(make_frame({0xD4, 0x10, 0xBF, 0x7F, 0x0E, 0x05, 0x00, 0x00, 0x00, 0x00, 0x14}), text, sizeof(text));
-  CHECK_STR_CONTAINS(text, "Roh: D4 10 BF 7F");
+  CHECK_STR_CONTAINS(text, "Init-Antworten: 19 Knoten (0, 1, 2, 3, 4, 5, 7, 8,");
+  CHECK_STR_CONTAINS(text, "17, 18, 19, 24, 26), eigene SID 20 [D4 10 BF 7F");
+
+  describe_frame(make_frame({0xD4, 0x12, 0x00}), text, sizeof(text));
+  CHECK_STR_CONTAINS(text, "Roh: D4 12 00");
 
   // Testtaste SID 14, Rauch, OK, ST-630-DE, seq 3.
   describe_frame(make_frame({0x70, 0x3D, 0xE4, 0x2F, 0x81, 0x01, 0x7C, 0x04, 0x0E, 0x03}), text, sizeof(text));
-  CHECK_STR_CONTAINS(text, "Test Gerät 2FE43D");
-  CHECK_STR_CONTAINS(text, "Rauch, bestanden, SID 14, Folge 3");
+  CHECK_STR_CONTAINS(text, "Test Gerät 2FE43D, Rauch, bestanden, Modell 1148 ST-630-DE, SID 14, Folge 3 [70 3D");
+
+  describe_frame(make_frame({0x70, 0x3D, 0xE4, 0x2F, 0x81, 0x01, 0x7C, 0x04, 0x0E, 0x03}), text, sizeof(text), false);
+  CHECK(std::strstr(text, "[") == nullptr);
 
   Frame partial = make_frame({0xD2, 0x20});
   partial.status = FrameStatus::Timeout;
@@ -137,6 +168,7 @@ void run_message_tests() {
   test_single_byte_replies();
   test_rm_status();
   test_rm_reports();
+  test_device_id_text();
   test_battery();
   test_describe();
 }
