@@ -327,6 +327,20 @@ void test_capacity() {
   CHECK(registry.find(3) == nullptr);
 }
 
+// Log vom 12.10.2026: SID 24 meldet in D4 06 die Geräte-ID von SID 14 und beantwortet C3 nicht.
+void test_shared_device_id() {
+  Registry registry;
+  apply(registry, {0xD4, 0x06, 0x18, 0x88, 0xC4, 0xC5, 0x2D, 0xEF, 0x3D, 0xE4, 0x2F, 0x01, 0x00});
+  registry.on_query_result(24, QUERY_IDENTITY, Outcome::Timeout);
+  const uint8_t id[] = {0x3D, 0xE4, 0x2F};
+  CHECK(registry.find_device(id) == registry.find(24));
+  fill_sid14(registry);
+  CHECK(registry.find_device(id) == registry.find(14));
+  CHECK(registry.known(24));
+  CHECK(!registry.find(24)->is_detector());
+  CHECK(registry.find(14)->is_detector());
+}
+
 }  // namespace
 
 void run_registry_tests() {
@@ -339,4 +353,5 @@ void run_registry_tests() {
   test_alarm_state();
   test_persistence();
   test_capacity();
+  test_shared_device_id();
 }

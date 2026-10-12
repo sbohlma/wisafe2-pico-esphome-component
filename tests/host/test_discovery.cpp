@@ -5,6 +5,7 @@
 #include "messages.h"
 #include "registry.h"
 
+#include <cstring>
 #include <initializer_list>
 
 using namespace esphome::wisafe2;
@@ -72,20 +73,22 @@ void test_query_for_payload() {
   CHECK_EQ(query_for_payload(nullptr, 0), 0);
 }
 
-void test_startup_missing_only() {
+void test_startup_identify_only() {
   Registry registry;
   prepare(registry);
   Discovery discovery;
   CHECK(!discovery.has_work());
-  discovery.request(Discovery::Scope::Missing);
+  discovery.request(Discovery::Scope::Identify);
   CHECK(discovery.waiting_for_map());
   // Nur SID 3 hat keinen Eintrag.
   CHECK_EQ(discovery.on_map(MAP, registry, OWN_SID), 1);
   CHECK(!discovery.waiting_for_map());
   CHECK(discovery.campaign_running());
   CHECK_EQ(discovery.campaign_total(), 1);
+  CHECK(std::strcmp(discovery.campaign_name(), "Erkundung") == 0);
 
-  CHECK(expect_next(discovery, registry, 3, QUERY_REMOTE_STATUS));
+  // Ohne Geräte-ID zuerst der Remote-Status.
+  CHECK(expect_next(discovery, registry, 3, QUERY_LOCATE));
   CHECK_EQ(discovery.campaign_index(), 1);
   DiscoveryTask task;
   // Höchstens eine offene Abfrage.
@@ -96,17 +99,15 @@ void test_startup_missing_only() {
   CHECK(discovery.busy());
 
   apply(registry, {0xD4, 0x06, 0x03, 0x64, 0x8C, 0x8C, 0x60, 0xEF, 0x08, 0x2F, 0x13, 0x00, 0x00});
+  // Die Komponente meldet D3 06 sid 00 immer als Remote-Status.
   discovery.on_result(3, QUERY_REMOTE_STATUS, Outcome::Ok);
+  CHECK(!discovery.busy());
   CHECK(expect_next(discovery, registry, 3, QUERY_IDENTITY));
   // C4 des Hitzemelders WHT-630.
   apply(registry, {0xC4, 0x08, 0x2F, 0x13, 0x82, 0x11, 0x04, 0x03, 0x02});
-  discovery.on_result(3, QUERY_IDENTITY, Outcome::Ok);
-  CHECK(expect_next(discovery, registry, 3, QUERY_BATTERY));
-  discovery.on_result(3, QUERY_BATTERY, Outcome::Ok);
-  CHECK(expect_next(discovery, registry, 3, QUERY_FAULT_DETAILS));
   CHECK(!discovery.take_finished());
-  discovery.on_result(3, QUERY_FAULT_DETAILS, Outcome::Ok);
-  // C5 nur bei WST-630 und ST-630-DE.
+  discovery.on_result(3, QUERY_IDENTITY, Outcome::Ok);
+  // Batterie und Fehler gehören zu den Netzdetails.
   CHECK(!discovery.next(registry, task));
   CHECK(discovery.take_finished());
   CHECK(!discovery.take_finished());
@@ -114,7 +115,7 @@ void test_startup_missing_only() {
   CHECK(registry.known(3));
 
   // Mit vollständigem Register gibt es beim nächsten Start nichts zu tun.
-  discovery.request(Discovery::Scope::Missing);
+  discovery.request(Discovery::Scope::Identify);
   CHECK_EQ(discovery.on_map(MAP, registry, OWN_SID), 0);
   CHECK(!discovery.has_work());
   CHECK(!discovery.campaign_running());
@@ -122,20 +123,50 @@ void test_startup_missing_only() {
   CHECK_EQ(discovery.on_map(MAP, registry, OWN_SID), 0);
 }
 
-void test_full_discovery() {
+void test_identify_known_device() {
+  Registry registry;
+  prepare(registry);
+  // Geräte-ID von SID 3 aus einer späten D4 06; der Remote-Status entfällt.
+  apply(registry, {0xD4, 0x06, 0x03, 0x64, 0x8C, 0x8C, 0x60, 0xEF, 0x08, 0x2F, 0x13, 0x00, 0x00});
+  Discovery discovery;
+  discovery.request(Discovery::Scope::Identify);
+  CHECK_EQ(discovery.on_map(MAP, registry, OWN_SID), 1);
+  CHECK(expect_next(discovery, registry, 3, QUERY_IDENTITY));
+  discovery.on_result(3, QUERY_IDENTITY, Outcome::Ok);
+  DiscoveryTask task;
+  CHECK(!discovery.next(registry, task));
+  CHECK(discovery.take_finished());
+}
+
+void test_identify_unreachable() {
   Registry registry;
   prepare(registry);
   Discovery discovery;
-  discovery.request(Discovery::Scope::All);
-  discovery.request(Discovery::Scope::Missing);
+  discovery.request(Discovery::Scope::Identify);
+  CHECK_EQ(discovery.on_map(MAP, registry, OWN_SID), 1);
+  CHECK(expect_next(discovery, registry, 3, QUERY_LOCATE));
+  // Ohne Remote-Status entfällt C4; der Eintrag bleibt unvollständig für den nächsten Start.
+  discovery.on_result(3, QUERY_REMOTE_STATUS, Outcome::Timeout);
+  DiscoveryTask task;
+  CHECK(!discovery.next(registry, task));
+  CHECK(discovery.take_finished());
+  CHECK(!registry.known(3));
+}
+
+void test_details() {
+  Registry registry;
+  prepare(registry);
+  Discovery discovery;
+  discovery.request(Discovery::Scope::Details);
   CHECK_EQ(discovery.on_map(MAP, registry, OWN_SID), 2);
   CHECK_EQ(discovery.campaign_total(), 2);
+  CHECK(std::strcmp(discovery.campaign_name(), "Netzdetails") == 0);
 
   // SID 3 antwortet nicht: die übrigen Schritte entfallen.
   CHECK(expect_next(discovery, registry, 3, QUERY_REMOTE_STATUS));
   discovery.on_result(3, QUERY_REMOTE_STATUS, Outcome::Unreachable);
 
-  // SID 14 hat eine bekannte Klasse, C4 entfällt.
+  // Netzdetails fragen kein C4.
   CHECK(expect_next(discovery, registry, 14, QUERY_REMOTE_STATUS));
   CHECK_EQ(discovery.campaign_index(), 2);
   discovery.on_result(14, QUERY_REMOTE_STATUS, Outcome::Ok);
@@ -151,13 +182,40 @@ void test_full_discovery() {
   CHECK(!discovery.has_work());
 }
 
+void test_identify_and_details() {
+  Registry registry;
+  prepare(registry);
+  Discovery discovery;
+  discovery.request(Discovery::Scope::Details);
+  discovery.request(Discovery::Scope::Identify);
+  CHECK_EQ(discovery.on_map(MAP, registry, OWN_SID), 2);
+  CHECK(std::strcmp(discovery.campaign_name(), "Erkundung und Netzdetails") == 0);
+
+  // D3 06 sid 00 läuft je SID nur einmal, auch wenn beide Abläufe ihn wollen.
+  CHECK(expect_next(discovery, registry, 3, QUERY_LOCATE));
+  apply(registry, {0xD4, 0x06, 0x03, 0x64, 0x8C, 0x8C, 0x60, 0xEF, 0x08, 0x2F, 0x13, 0x00, 0x00});
+  discovery.on_result(3, QUERY_REMOTE_STATUS, Outcome::Ok);
+  CHECK(expect_next(discovery, registry, 3, QUERY_IDENTITY));
+  apply(registry, {0xC4, 0x08, 0x2F, 0x13, 0x82, 0x11, 0x04, 0x03, 0x02});
+  discovery.on_result(3, QUERY_IDENTITY, Outcome::Ok);
+  CHECK(expect_next(discovery, registry, 3, QUERY_BATTERY));
+  discovery.on_result(3, QUERY_BATTERY, Outcome::Ok);
+  CHECK(expect_next(discovery, registry, 3, QUERY_FAULT_DETAILS));
+  discovery.on_result(3, QUERY_FAULT_DETAILS, Outcome::Ok);
+
+  // SID 14 ist bekannt: Remote-Status der Netzdetails, kein C4.
+  CHECK(expect_next(discovery, registry, 14, QUERY_REMOTE_STATUS));
+  discovery.on_result(14, QUERY_REMOTE_STATUS, Outcome::Ok);
+  CHECK(expect_next(discovery, registry, 14, QUERY_BATTERY));
+}
+
 void test_rm_without_detector() {
   Registry registry;
   prepare(registry);
   Discovery discovery;
-  discovery.request(Discovery::Scope::Missing);
+  discovery.request(Discovery::Scope::Identify);
   CHECK_EQ(discovery.on_map(MAP, registry, OWN_SID), 1);
-  CHECK(expect_next(discovery, registry, 3, QUERY_REMOTE_STATUS));
+  CHECK(expect_next(discovery, registry, 3, QUERY_LOCATE));
   apply(registry, {0xD4, 0x06, 0x03, 0x2A, 0x38, 0x41, 0x30, 0xEF, 0x60, 0x1A, 0x03, 0x00, 0x00});
   discovery.on_result(3, QUERY_REMOTE_STATUS, Outcome::Ok);
   CHECK(expect_next(discovery, registry, 3, QUERY_IDENTITY));
@@ -167,6 +225,41 @@ void test_rm_without_detector() {
   CHECK(!discovery.next(registry, task));
   CHECK(discovery.take_finished());
   CHECK(registry.known(3));
+
+  // Netzdetails: nur der Remote-Status, kein weiteres C4.
+  discovery.request(Discovery::Scope::Details);
+  CHECK_EQ(discovery.on_map(MAP, registry, OWN_SID), 2);
+  CHECK(expect_next(discovery, registry, 3, QUERY_REMOTE_STATUS));
+  discovery.on_result(3, QUERY_REMOTE_STATUS, Outcome::Ok);
+  CHECK(expect_next(discovery, registry, 14, QUERY_REMOTE_STATUS));
+}
+
+void test_next_campaign_counts_last_sid() {
+  Registry registry;
+  prepare(registry);
+  Discovery discovery;
+  // Die erste Runde endet mit SID 14.
+  discovery.request(Discovery::Scope::Details);
+  CHECK_EQ(discovery.on_map(MAP, registry, OWN_SID), 2);
+  CHECK(expect_next(discovery, registry, 3, QUERY_REMOTE_STATUS));
+  discovery.on_result(3, QUERY_REMOTE_STATUS, Outcome::Timeout);
+  CHECK(expect_next(discovery, registry, 14, QUERY_REMOTE_STATUS));
+  discovery.on_result(14, QUERY_REMOTE_STATUS, Outcome::Timeout);
+  CHECK(discovery.take_finished());
+
+  // Die nächste Runde beginnt wieder vorn, zählt jede SID und endet.
+  discovery.request(Discovery::Scope::Details);
+  CHECK_EQ(discovery.on_map(MAP, registry, OWN_SID), 2);
+  CHECK(expect_next(discovery, registry, 3, QUERY_REMOTE_STATUS));
+  CHECK_EQ(discovery.campaign_index(), 1);
+  discovery.on_result(3, QUERY_REMOTE_STATUS, Outcome::Timeout);
+  CHECK(expect_next(discovery, registry, 14, QUERY_REMOTE_STATUS));
+  CHECK_EQ(discovery.campaign_index(), 2);
+  discovery.on_result(14, QUERY_REMOTE_STATUS, Outcome::Timeout);
+  DiscoveryTask task;
+  CHECK(!discovery.next(registry, task));
+  CHECK(discovery.take_finished());
+  CHECK(!discovery.campaign_running());
 }
 
 void test_rejected_and_events() {
@@ -247,7 +340,7 @@ void test_periodic() {
   CHECK(!discovery.has_work());
 
   // Während einer Erkundung pausiert die periodische Planung.
-  discovery.request(Discovery::Scope::All);
+  discovery.request(Discovery::Scope::Details);
   discovery.tick(now + battery_ms, registry, OWN_SID);
   CHECK(!discovery.has_work());
 
@@ -261,9 +354,13 @@ void test_periodic() {
 
 void run_discovery_tests() {
   test_query_for_payload();
-  test_startup_missing_only();
-  test_full_discovery();
+  test_startup_identify_only();
+  test_identify_known_device();
+  test_identify_unreachable();
+  test_details();
+  test_identify_and_details();
   test_rm_without_detector();
+  test_next_campaign_counts_last_sid();
   test_rejected_and_events();
   test_periodic();
 }

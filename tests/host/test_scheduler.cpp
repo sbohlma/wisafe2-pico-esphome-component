@@ -297,6 +297,25 @@ void test_remote_reply_timeout() {
   CHECK(f.results[0].outcome == Outcome::Timeout);
 }
 
+void test_remote_timeout_setting() {
+  Fixture f;
+  f.scheduler.set_remote_timeout(60000);
+  CHECK_EQ(f.scheduler.remote_timeout(), 60000u);
+  f.scheduler.enqueue(Request::remote(1, REMOTE_STATUS, sizeof(REMOTE_STATUS), REMOTE_STATUS_PREFIX, 3));
+  f.scheduler.service(f.now, false);
+  f.sent_ok();
+  f.frame({0x46});
+  f.advance(60000 - 20);
+  CHECK(f.results.empty());
+  f.advance(20);
+  CHECK_EQ(f.results.size(), 1);
+  CHECK(f.results[0].outcome == Outcome::Timeout);
+
+  // Eine späte Antwort nach dem Zeitlimit beendet nichts mehr.
+  f.frame({0xD4, 0x06, 0x05, 0x86, 0xBB, 0xBB, 0x70, 0xEF, 0x3D, 0xE4, 0x2F, 0x01, 0x00});
+  CHECK_EQ(f.results.size(), 1);
+}
+
 void test_unreachable() {
   Fixture f;
   f.scheduler.enqueue(
@@ -416,6 +435,7 @@ void run_scheduler_tests() {
   test_local_timeout_ignores_other_frames();
   test_single_open_remote();
   test_remote_reply_timeout();
+  test_remote_timeout_setting();
   test_unreachable();
   test_reply_from_sid();
   test_reply_by_device();
