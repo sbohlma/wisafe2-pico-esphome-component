@@ -5,6 +5,8 @@ void run_message_tests();
 void run_radio_tests();
 void run_host_identity_tests();
 void run_scheduler_tests();
+void run_registry_tests();
+void run_discovery_tests();
 
 int main() {
   run_framing_tests();
@@ -12,6 +14,8 @@ int main() {
   run_radio_tests();
   run_host_identity_tests();
   run_scheduler_tests();
+  run_registry_tests();
+  run_discovery_tests();
   std::printf("%d Prüfungen, %d fehlgeschlagen\n", check::checks(), check::failures());
   return check::failures() == 0 ? 0 : 1;
 }

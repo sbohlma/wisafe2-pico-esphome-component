@@ -4,7 +4,6 @@
 #include "duplicate_filter.h"
 #include "frame_analyzer.h"
 #include "messages.h"
-#include "node_cache.h"
 
 #include <initializer_list>
 #include <string>
@@ -179,40 +178,6 @@ void test_duplicates() {
   CHECK(!filter.seen(11, 0xC8, 14, 61001));
 }
 
-void test_node_cache() {
-  NodeCache cache;
-  RadioMessage msg;
-  CHECK(parse_radio(make_frame({0xC4, 0xA5, 0xB8, 0x13, 0xFF, 0x11, 0x03, 0x10, 0x02}), msg));
-  cache.update(msg);
-  const NodeInfo *node = cache.get(16);
-  CHECK(node != nullptr);
-  CHECK(node->has_device);
-  CHECK(node->has_model);
-  CHECK_EQ(node->model, MODEL_WST_630);
-  CHECK_EQ(node->device_class, 0xFF);
-
-  // Anfragen tragen das Zielgerät und ändern den Absender nicht.
-  CHECK(parse_radio(make_frame({0xC7, 0x3D, 0xE4, 0x2F, 0x7C, 0x04, 0x06, 0x10, 0x03}), msg));
-  cache.update(msg);
-  CHECK_EQ(cache.get(16)->device_id[0], 0xA5);
-
-  LocalMessage local;
-  CHECK(parse_local(make_frame({0xD4, 0x06, 0x18, 0x86, 0xBB, 0xBB, 0x70, 0xEF, 0x3D, 0xE4, 0x2F, 0x01, 0x00}), local));
-  cache.update(local);
-  CHECK(cache.get(24)->has_device);
-  CHECK(!cache.get(24)->has_model);
-  CHECK_EQ(cache.get(24)->device_id[2], 0x2F);
-
-  // Ein RM ohne gelernte ID liefert 000000.
-  CHECK(parse_local(make_frame({0xD4, 0x06, 0x19, 0x86, 0xBB, 0xBB, 0x70, 0xEF, 0x00, 0x00, 0x00, 0x00, 0x00}), local));
-  cache.update(local);
-  CHECK(!cache.get(25)->has_device);
-
-  CHECK(cache.get(64) == nullptr);
-  cache.clear();
-  CHECK(!cache.get(16)->has_device);
-}
-
 }  // namespace
 
 void run_radio_tests() {
@@ -220,5 +185,4 @@ void run_radio_tests() {
   test_parse_examples();
   test_describe_radio();
   test_duplicates();
-  test_node_cache();
 }
