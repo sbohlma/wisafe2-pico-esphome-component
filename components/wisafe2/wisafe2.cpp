@@ -1,12 +1,13 @@
 #include "wisafe2.h"
 
+#include "catalog.h"
 #include "core_ipc.h"
 #include "frame_analyzer.h"
-#include "messages.h"
 #include "esphome/components/network/util.h"
 #include "esphome/core/hal.h"
 #include "esphome/core/log.h"
 
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 
@@ -20,11 +21,11 @@ static constexpr uint8_t RM_STATUS_PAYLOAD[] = {0xD1};
 static constexpr uint8_t RM_STATUS_REPLY[] = {MSG_RM_STATUS};
 static constexpr uint8_t SID_MAP_PAYLOAD[] = {0xD3, 0x03};
 static constexpr uint8_t SID_MAP_REPLY[] = {MSG_RM_REPORT, 0x03};
+static constexpr uint8_t ID_INFO_REPLY[] = {0xC4};
 // Gibt Log-Clients nach dem WLAN-Aufbau Zeit, sich zu verbinden.
 static constexpr uint32_t MODULE_START_DELAY_MS = 5000;
 static constexpr int INIT_ATTEMPTS = 50;
 // Nach der Quittung des Inits nimmt das Modul keine Bytes an, bis es D4 10 gemeldet hat (etwa 3 s).
-static constexpr uint8_t INIT_REPORT_PREFIX[] = {MSG_RM_REPORT, 0x10};
 static constexpr uint32_t INIT_REPORT_TIMEOUT_MS = 10000;
 
 static const char *const STATUS_WAIT_NETWORK = "warte auf WLAN";
@@ -32,6 +33,15 @@ static const char *const STATUS_INIT = "Init läuft";
 static const char *const STATUS_READY = "Modul bereit";
 static const char *const STATUS_NO_REPLY = "keine Antwort";
 static const char *const STATUS_UNPAIRED = "ungekoppelt";
+static const char *const STATUS_ID_MISMATCH = "Geräte-ID weicht ab";
+
+void WiSafe2Component::set_identity(uint8_t id0, uint8_t id1, uint8_t id2, uint16_t model) {
+  this->identity_.valid = true;
+  this->identity_.device_id[0] = id0;
+  this->identity_.device_id[1] = id1;
+  this->identity_.device_id[2] = id2;
+  this->identity_.model = model;
+}
 
 void WiSafe2Component::publish_status_(const char *status) {
   if (this->status_ == status) {
@@ -41,6 +51,22 @@ void WiSafe2Component::publish_status_(const char *status) {
   ESP_LOGI(TAG, "Status: %s", status);
   if (this->status_sensor_ != nullptr) {
     this->status_sensor_->publish_state(status);
+  }
+}
+
+void WiSafe2Component::update_module_status_() {
+  if (!this->paired_) {
+    this->publish_status_(STATUS_UNPAIRED);
+  } else if (this->id_mismatch_) {
+    this->publish_status_(STATUS_ID_MISMATCH);
+  } else {
+    this->publish_status_(STATUS_READY);
+  }
+}
+
+void WiSafe2Component::publish_last_reply_(const char *text) {
+  if (this->last_reply_sensor_ != nullptr) {
+    this->last_reply_sensor_->publish_state(text);
   }
 }
 
@@ -68,10 +94,12 @@ void WiSafe2Component::start_module_() {
   this->start_state_ = StartState::Running;
 }
 
-void WiSafe2Component::enqueue_(const Request &request) {
+bool WiSafe2Component::enqueue_(const Request &request) {
   if (!this->scheduler_.enqueue(request)) {
     ESP_LOGW(TAG, "Warteschlange voll, Befehl %02X verworfen", request.payload[0]);
+    return false;
   }
+  return true;
 }
 
 void WiSafe2Component::enqueue_init_() {
@@ -101,19 +129,127 @@ void WiSafe2Component::query_sid_map() {
   this->enqueue_(Request::local(TAG_SID_MAP, SID_MAP_PAYLOAD, sizeof(SID_MAP_PAYLOAD), SID_MAP_REPLY, sizeof(SID_MAP_REPLY)));
 }
 
+void WiSafe2Component::query_remote_status(uint8_t sid) {
+  if (sid > MAX_SID) {
+    ESP_LOGW(TAG, "Remote-Status: SID %u ungültig (0–63)", sid);
+    return;
+  }
+  this->start_module_();
+  const uint8_t payload[] = {0xD3, 0x06, sid, 0x00};
+  const uint8_t reply[] = {MSG_RM_REPORT, 0x06, sid};
+  ESP_LOGI(TAG, "Abfrage Remote-Status SID %u", sid);
+  this->enqueue_(Request::remote(TAG_QUERY_REMOTE_STATUS, payload, sizeof(payload), reply, sizeof(reply)).to_sid(sid));
+}
+
+void WiSafe2Component::query_identity(uint8_t sid) {
+  if (sid > MAX_SID) {
+    ESP_LOGW(TAG, "ID-Abfrage: SID %u ungültig (0–63)", sid);
+    return;
+  }
+  this->start_module_();
+  const uint8_t payload[] = {0xD3, 0x06, sid, 0x01};
+  ESP_LOGI(TAG, "Abfrage ID-Information SID %u", sid);
+  this->enqueue_(Request::remote(TAG_QUERY_IDENTITY, payload, sizeof(payload), ID_INFO_REPLY, sizeof(ID_INFO_REPLY))
+                     .from_sid(sid)
+                     .to_sid(sid));
+}
+
+void WiSafe2Component::query_device(uint8_t request_code, uint8_t sid, const std::string &device_id, uint16_t model) {
+  const char *what = nullptr;
+  uint8_t last = 0;
+  switch (request_code) {
+    case 0xC7:
+      what = "Batterie";
+      break;
+    case 0x72:
+      what = "Fehlerdetails";
+      break;
+    case 0xC5:
+      what = "Fehlerereignisse";
+      last = 0x74;
+      break;
+    default:
+      ESP_LOGW(TAG, "Abfrage %02X nicht unterstützt", request_code);
+      return;
+  }
+
+  uint8_t id[3];
+  bool have_id = false;
+  if (!device_id.empty()) {
+    if (!parse_device_id(device_id.c_str(), id)) {
+      ESP_LOGW(TAG, "%s: device_id \"%s\" ungültig, erwartet 6 Hex-Ziffern wie 2FE43D", what, device_id.c_str());
+      return;
+    }
+    have_id = true;
+  }
+  const NodeInfo *node = this->nodes_.get(sid);
+  if (!have_id && node != nullptr && node->has_device) {
+    std::memcpy(id, node->device_id, 3);
+    have_id = true;
+  }
+  if (model == 0 && node != nullptr && node->has_model) {
+    model = node->model;
+  }
+  if (!have_id || model == 0) {
+    char text[160];
+    std::snprintf(text, sizeof(text), "%s SID %u: %s unbekannt; erst Remote-Status und ID-Information abfragen", what,
+                  sid, have_id ? "Modell" : "Geräte-ID");
+    ESP_LOGW(TAG, "%s", text);
+    this->publish_last_reply_(text);
+    return;
+  }
+  if (request_code == 0xC7) {
+    last = model == MODEL_WHM_1 ? 0x05 : 0x06;
+  }
+
+  this->start_module_();
+  uint8_t payload[7] = {request_code, id[0], id[1], id[2], 0, 0, last};
+  write_model(model, payload + 4);
+  const uint8_t reply[] = {static_cast<uint8_t>(request_code + 1), id[0], id[1], id[2]};
+  char shown[8];
+  format_device_id(id, shown, sizeof(shown));
+  ESP_LOGI(TAG, "Abfrage %s Gerät %s, Modell %u", what, shown, model);
+  this->enqueue_(Request::remote(TAG_QUERY_DEVICE, payload, sizeof(payload), reply, sizeof(reply)));
+}
+
 void WiSafe2Component::query_after_init_() {
   this->await_init_report_ = false;
   this->query_rm_status();
   this->query_sid_map();
 }
 
+void WiSafe2Component::report_query_(const Completion &completion) {
+  const Request &request = completion.request;
+  char text[256];
+  if (completion.outcome == Outcome::Ok && completion.reply != nullptr) {
+    describe_frame(*completion.reply, text, sizeof(text), false);
+    this->publish_last_reply_(text);
+    return;
+  }
+  char label[48];
+  if (request.tag == TAG_QUERY_DEVICE) {
+    char shown[8];
+    format_device_id(request.payload + 1, shown, sizeof(shown));
+    const char *what = request.payload[0] == 0xC7 ? "Batterie" : request.payload[0] == 0x72 ? "Fehlerdetails"
+                                                                                           : "Fehlerereignisse";
+    std::snprintf(label, sizeof(label), "%s Gerät %s", what, shown);
+  } else {
+    std::snprintf(label, sizeof(label), "%s SID %u",
+                  request.tag == TAG_QUERY_REMOTE_STATUS ? "Remote-Status" : "ID-Information", request.payload[2]);
+  }
+  std::snprintf(text, sizeof(text), "%s: %s", label, outcome_name(completion.outcome));
+  ESP_LOGW(TAG, "%s", text);
+  this->publish_last_reply_(text);
+}
+
 void WiSafe2Component::handle_completion_(const Completion &completion) {
-  switch (completion.request.tag) {
+  const Request &request = completion.request;
+  switch (request.tag) {
     case TAG_INIT:
       this->init_pending_ = false;
       if (completion.outcome == Outcome::Ok) {
         ESP_LOGI(TAG, "Init quittiert nach %d Versuch(en), warte auf D4 10", this->init_attempt_);
-        this->publish_status_(STATUS_READY);
+        this->update_module_status_();
         this->await_init_report_ = true;
         this->init_report_deadline_ms_ = millis() + INIT_REPORT_TIMEOUT_MS;
       } else if (this->init_attempt_ < INIT_ATTEMPTS) {
@@ -126,42 +262,147 @@ void WiSafe2Component::handle_completion_(const Completion &completion) {
       }
       break;
     case TAG_RM_STATUS:
-      if (completion.outcome != Outcome::Ok) {
-        ESP_LOGW(TAG, "D1 (RM-Status): %s nach %u Sendeversuch(en)", outcome_name(completion.outcome),
-                 static_cast<unsigned>(completion.request.send_attempts));
-      }
-      break;
     case TAG_SID_MAP:
       if (completion.outcome != Outcome::Ok) {
-        ESP_LOGW(TAG, "D3 03 (SID-Map): %s nach %u Sendeversuch(en)", outcome_name(completion.outcome),
-                 static_cast<unsigned>(completion.request.send_attempts));
+        ESP_LOGW(TAG, "%s: %s nach %u Sendeversuch(en)", request.tag == TAG_RM_STATUS ? "D1 (RM-Status)" : "D3 03 (SID-Map)",
+                 outcome_name(completion.outcome), static_cast<unsigned>(request.send_attempts));
       }
+      break;
+    case TAG_IDENTITY_REPLY:
+    case TAG_HOST_REPLY:
+      if (completion.outcome != Outcome::Ok) {
+        ESP_LOGW(TAG, "Antwort %02X: %s", request.payload[0], outcome_name(completion.outcome));
+      }
+      break;
+    case TAG_QUERY_REMOTE_STATUS:
+    case TAG_QUERY_IDENTITY:
+    case TAG_QUERY_DEVICE:
+      this->report_query_(completion);
       break;
     default:
       break;
   }
 }
 
+void WiSafe2Component::handle_rm_status_(const LocalMessage &msg) {
+  const RmState &rm = msg.rm;
+  this->paired_ = msg.sid != SID_UNPAIRED;
+  char id_text[8];
+  format_device_id(rm.device_id, id_text, sizeof(id_text));
+  char fw_text[4];
+  std::snprintf(fw_text, sizeof(fw_text), "%02X", rm.firmware);
+
+  if (this->rm_sid_sensor_ != nullptr) {
+    this->rm_sid_sensor_->publish_state(this->paired_ ? static_cast<float>(msg.sid) : NAN);
+  }
+  if (this->rm_battery_sensor_ != nullptr) {
+    this->rm_battery_sensor_->publish_state(static_cast<float>(rm_battery_mv(rm.bvnl)) / 1000.0f);
+  }
+  if (this->rm_rssi_sensor_ != nullptr) {
+    this->rm_rssi_sensor_->publish_state(rm.rssi);
+  }
+  if (this->rm_radio_faults_sensor_ != nullptr) {
+    this->rm_radio_faults_sensor_->publish_state(rm.radio_faults);
+  }
+  if (this->rm_firmware_sensor_ != nullptr) {
+    this->rm_firmware_sensor_->publish_state(fw_text);
+  }
+  if (this->rm_device_id_sensor_ != nullptr) {
+    this->rm_device_id_sensor_->publish_state(id_text);
+  }
+  if (this->rm_paired_sensor_ != nullptr) {
+    this->rm_paired_sensor_->publish_state(this->paired_);
+  }
+
+  if (this->identity_.valid && this->paired_) {
+    const bool mismatch = std::memcmp(rm.device_id, this->identity_.device_id, 3) != 0;
+    if (mismatch) {
+      char own[8];
+      format_device_id(this->identity_.device_id, own, sizeof(own));
+      ESP_LOGW(TAG, "Geräte-ID im Modul %s weicht von device_id %s ab", id_text, own);
+    } else if (!this->id_confirmed_) {
+      ESP_LOGI(TAG, "Geräte-ID im Modul stimmt mit device_id %s überein", id_text);
+    }
+    this->id_mismatch_ = mismatch;
+    this->id_confirmed_ = !mismatch;
+  }
+  this->update_module_status_();
+}
+
+void WiSafe2Component::handle_local_(const LocalMessage &msg) {
+  switch (msg.type) {
+    case LocalType::IdentityRequest: {
+      uint8_t reply[HOST_REPLY_MAX];
+      const size_t len = build_identity_reply(this->identity_, reply, sizeof(reply));
+      if (len == 0) {
+        ESP_LOGW(TAG, "41 bleibt unbeantwortet: keine device_id in der YAML");
+        return;
+      }
+      ESP_LOGI(TAG, "Beantworte 41 mit 91");
+      this->enqueue_(Request::host_reply(TAG_IDENTITY_REPLY, reply, len, false));
+      break;
+    }
+    case LocalType::RmStatus:
+      // D2 kommt auch unaufgefordert etwa stündlich.
+      this->handle_rm_status_(msg);
+      break;
+    case LocalType::LocalSidMap:
+      this->paired_ = msg.map != 0;
+      if (this->rm_paired_sensor_ != nullptr) {
+        this->rm_paired_sensor_->publish_state(this->paired_);
+      }
+      this->update_module_status_();
+      break;
+    case LocalType::RemoteStatus:
+    case LocalType::PresenceHeard:
+      this->nodes_.update(msg);
+      break;
+    default:
+      break;
+  }
+}
+
+void WiSafe2Component::handle_radio_(const RadioMessage &msg, uint32_t now) {
+  this->nodes_.update(msg);
+  if (!is_host_request(msg.type) || !this->identity_.valid) {
+    return;
+  }
+  uint8_t reply[HOST_REPLY_MAX];
+  const size_t len = build_host_reply(msg, this->identity_, reply, sizeof(reply));
+  if (len == 0) {
+    return;
+  }
+  if (!this->reply_limiter_.allow(msg.code, now)) {
+    ESP_LOGD(TAG, "%02X von SID %u: innerhalb von 60 s schon beantwortet", msg.code, msg.sid);
+    return;
+  }
+  ESP_LOGI(TAG, "Beantworte %02X von SID %u mit %02X", msg.code, msg.sid, reply[0]);
+  this->enqueue_(Request::host_reply(TAG_HOST_REPLY, reply, len, true));
+}
+
 void WiSafe2Component::handle_frame_(const Frame &frame, uint32_t now) {
+  RadioMessage radio;
+  const bool is_radio = parse_radio(frame, radio);
+  const bool duplicate = is_radio && this->duplicates_.seen(radio.sid, radio.code, radio.seq, now);
+
   char text[256];
   describe_frame(frame, text, sizeof(text));
-  ESP_LOGI(TAG, "%s", text);
+  if (duplicate) {
+    ESP_LOGD(TAG, "Duplikat: %s", text);
+  } else {
+    ESP_LOGI(TAG, "%s", text);
+  }
 
-  // D2 kommt auch unaufgefordert etwa stündlich.
-  LocalMessage msg;
-  if (parse_local(frame, msg)) {
-    if (msg.type == LocalType::RmStatus) {
-      this->publish_status_(msg.sid == SID_UNPAIRED ? STATUS_UNPAIRED : STATUS_READY);
-    } else if (msg.type == LocalType::LocalSidMap) {
-      this->publish_status_(msg.map == 0 ? STATUS_UNPAIRED : STATUS_READY);
-    }
+  LocalMessage local;
+  if (parse_local(frame, local)) {
+    this->handle_local_(local);
+  } else if (is_radio && !duplicate) {
+    this->handle_radio_(radio, now);
   }
 
   this->scheduler_.on_frame(frame, now);
 
-  if (this->await_init_report_ && frame.status == FrameStatus::Complete &&
-      frame.len >= sizeof(INIT_REPORT_PREFIX) &&
-      std::memcmp(frame.data, INIT_REPORT_PREFIX, sizeof(INIT_REPORT_PREFIX)) == 0) {
+  if (this->await_init_report_ && local.type == LocalType::InitReport) {
     this->query_after_init_();
   }
 }
@@ -231,7 +472,24 @@ void WiSafe2Component::loop() {
 
 void WiSafe2Component::dump_config() {
   ESP_LOGCONFIG(TAG, "WiSafe2:");
+  if (this->identity_.valid) {
+    char id_text[8];
+    format_device_id(this->identity_.device_id, id_text, sizeof(id_text));
+    const char *name = model_name(this->identity_.model);
+    ESP_LOGCONFIG(TAG, "  Identität: Geräte-ID %s, Modell %u %s, Klasse FF", id_text, this->identity_.model,
+                  name != nullptr ? name : "");
+  } else {
+    ESP_LOGCONFIG(TAG, "  Identität: keine device_id, 41 und Anfragen bleiben unbeantwortet");
+  }
   LOG_TEXT_SENSOR("  ", "Status", this->status_sensor_);
+  LOG_TEXT_SENSOR("  ", "Letzte Antwort", this->last_reply_sensor_);
+  LOG_SENSOR("  ", "RM-SID", this->rm_sid_sensor_);
+  LOG_SENSOR("  ", "RM-Batterie", this->rm_battery_sensor_);
+  LOG_SENSOR("  ", "RM-RSSI", this->rm_rssi_sensor_);
+  LOG_SENSOR("  ", "RM-Funkfehler", this->rm_radio_faults_sensor_);
+  LOG_TEXT_SENSOR("  ", "RM-Firmware", this->rm_firmware_sensor_);
+  LOG_TEXT_SENSOR("  ", "RM-Geräte-ID", this->rm_device_id_sensor_);
+  LOG_BINARY_SENSOR("  ", "RM gekoppelt", this->rm_paired_sensor_);
   ESP_LOGCONFIG(TAG, "  SPI-Slave Kern 1: GP16 MOSI, GP17 CS, GP18 SCK, GP19 MISO, GP20 IRQ");
   ESP_LOGCONFIG(TAG, "  Rahmen maskiert, 500 ms Ruhe zwischen Befehlen, Init D3 19 50 00");
 }

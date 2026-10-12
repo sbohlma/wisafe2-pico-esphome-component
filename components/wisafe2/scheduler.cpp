@@ -42,6 +42,8 @@ const char *outcome_name(Outcome outcome) {
       return "keine Antwort";
     case Outcome::SendFailed:
       return "nicht gesendet";
+    case Outcome::Unreachable:
+      return "nicht erreichbar (D4 01)";
   }
   return "?";
 }
@@ -71,7 +73,19 @@ bool Request::matches_reply(const Frame &frame) const {
   if (this->reply_len == 0 || frame.status != FrameStatus::Complete || frame.len < this->reply_len) {
     return false;
   }
-  return std::memcmp(frame.data, this->reply_prefix, this->reply_len) == 0;
+  if (std::memcmp(frame.data, this->reply_prefix, this->reply_len) != 0) {
+    return false;
+  }
+  return this->reply_sid == NO_SID || (frame.len >= 2 && frame.data[frame.len - 2] == this->reply_sid);
+}
+
+bool Request::matches_unreachable(const Frame &frame) const {
+  // D4 01 00 map(8): Ziel nach D3 06 nicht erreichbar.
+  if (this->target_sid > 63 || frame.status != FrameStatus::Complete || frame.len < 11 || frame.data[0] != 0xD4 ||
+      frame.data[1] != 0x01 || frame.data[2] != 0x00) {
+    return false;
+  }
+  return (frame.data[3 + this->target_sid / 8] & (1u << (this->target_sid % 8))) != 0;
 }
 
 bool Scheduler::enqueue(const Request &request) {
@@ -223,6 +237,10 @@ bool Scheduler::on_frame(const Frame &frame, uint32_t now_ms) {
   }
   if (this->remote_open_ && this->remote_.matches_reply(frame)) {
     this->finish_remote_(Outcome::Ok, &frame);
+    return true;
+  }
+  if (this->remote_open_ && this->remote_.matches_unreachable(frame)) {
+    this->finish_remote_(Outcome::Unreachable, nullptr);
     return true;
   }
   return false;

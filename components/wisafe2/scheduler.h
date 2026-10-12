@@ -38,9 +38,12 @@ enum class Outcome : uint8_t {
   Ok,
   Rejected,    // 47
   NoAck,       // weder 46 noch 47
-  Timeout,     // erwartete Antwort blieb aus
-  SendFailed,  // Kern 1 hat den Befehl nicht vollständig abgesetzt
+  Timeout,      // erwartete Antwort blieb aus
+  SendFailed,   // Kern 1 hat den Befehl nicht vollständig abgesetzt
+  Unreachable,  // D4 01 mit der Ziel-SID in der Missing-Map
 };
+
+static constexpr uint8_t NO_SID = 0xFF;
 
 const char *outcome_name(Outcome outcome);
 
@@ -52,7 +55,12 @@ struct Request {
   bool expects_ack{false};
   // Die Antwort beginnt mit diesen Bytes. 0: keine Antwort erwartet.
   uint8_t reply_len{0};
-  uint8_t reply_prefix[3]{};
+  uint8_t reply_prefix[4]{};
+  // Falls gesetzt, muss die Antwort von dieser SID stammen (vorletztes Byte). Nach dem Init bekommt der Host
+  // Kopien aller Hostantworten, auch C4 auf Anfragen anderer Knoten.
+  uint8_t reply_sid{NO_SID};
+  // Falls gesetzt, beendet D4 01 mit dieser SID die Anfrage als nicht erreichbar.
+  uint8_t target_sid{NO_SID};
   uint32_t reply_timeout_ms{0};
   uint8_t send_attempts{0};
 
@@ -62,7 +70,17 @@ struct Request {
   static Request remote(uint8_t tag, const uint8_t *payload, size_t len, const uint8_t *reply_prefix = nullptr,
                         size_t reply_len = 0);
 
+  Request &from_sid(uint8_t sid) {
+    this->reply_sid = sid;
+    return *this;
+  }
+  Request &to_sid(uint8_t sid) {
+    this->target_sid = sid;
+    return *this;
+  }
+
   bool matches_reply(const Frame &frame) const;
+  bool matches_unreachable(const Frame &frame) const;
 };
 
 struct Completion {
