@@ -151,6 +151,7 @@ void Scheduler::acknowledged_(uint32_t now_ms) {
     return;
   }
   this->remote_ = this->active_;
+  this->remote_.reply_timeout_ms = this->remote_timeout_ms_;
   this->remote_open_ = true;
   this->remote_since_ms_ = now_ms;
   this->phase_ = Phase::Idle;

@@ -23,6 +23,7 @@ WiSafe2RmStatusButton = wisafe2_ns.class_("WiSafe2RmStatusButton", button.Button
 WiSafe2SidMapButton = wisafe2_ns.class_("WiSafe2SidMapButton", button.Button)
 WiSafe2DiscoverButton = wisafe2_ns.class_("WiSafe2DiscoverButton", button.Button)
 WiSafe2RediscoverButton = wisafe2_ns.class_("WiSafe2RediscoverButton", button.Button)
+WiSafe2DetailsButton = wisafe2_ns.class_("WiSafe2DetailsButton", button.Button)
 WiSafe2RegistryLogButton = wisafe2_ns.class_("WiSafe2RegistryLogButton", button.Button)
 QueryRemoteStatusAction = wisafe2_ns.class_("QueryRemoteStatusAction", automation.Action)
 QueryIdentityAction = wisafe2_ns.class_("QueryIdentityAction", automation.Action)
@@ -45,10 +46,12 @@ CONF_RM_STATUS_BUTTON = "rm_status_button"
 CONF_SID_MAP_BUTTON = "sid_map_button"
 CONF_DISCOVER_BUTTON = "discover_button"
 CONF_REDISCOVER_BUTTON = "rediscover_button"
+CONF_DETAILS_BUTTON = "details_button"
 CONF_REGISTRY_LOG_BUTTON = "registry_log_button"
 CONF_AUTO_DISCOVERY = "auto_discovery"
 CONF_REMOTE_STATUS_INTERVAL = "remote_status_interval"
 CONF_BATTERY_INTERVAL = "battery_interval"
+CONF_REMOTE_TIMEOUT = "remote_timeout"
 
 # WST-630, wie Arduino-Firmware und NikNakk; im Paket 11 03.
 DEFAULT_MODEL = 0x0311
@@ -86,6 +89,10 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Optional(CONF_AUTO_DISCOVERY, default=False): cv.boolean,
         cv.Optional(CONF_REMOTE_STATUS_INTERVAL, default="19h"): interval,
         cv.Optional(CONF_BATTERY_INTERVAL, default="24h"): interval,
+        cv.Optional(CONF_REMOTE_TIMEOUT, default="180s"): cv.All(
+            cv.positive_time_period_milliseconds,
+            cv.Range(min=cv.TimePeriod(seconds=30), max=cv.TimePeriod(minutes=10)),
+        ),
         cv.Optional(CONF_STATUS): text_sensor.text_sensor_schema(),
         cv.Optional(CONF_LAST_REPLY): text_sensor.text_sensor_schema(
             icon="mdi:message-reply-text-outline",
@@ -155,6 +162,10 @@ CONFIG_SCHEMA = cv.Schema(
             entity_category=ENTITY_CATEGORY_CONFIG,
             icon="mdi:lan-pending",
         ),
+        cv.Optional(CONF_DETAILS_BUTTON): button.button_schema(
+            WiSafe2DetailsButton,
+            icon="mdi:lan-check",
+        ),
         cv.Optional(CONF_REGISTRY_LOG_BUTTON): button.button_schema(
             WiSafe2RegistryLogButton,
             entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
@@ -173,6 +184,7 @@ async def to_code(config):
     cg.add(var.set_auto_discovery(config[CONF_AUTO_DISCOVERY]))
     cg.add(var.set_remote_status_interval(config[CONF_REMOTE_STATUS_INTERVAL]))
     cg.add(var.set_battery_interval(config[CONF_BATTERY_INTERVAL]))
+    cg.add(var.set_remote_timeout(config[CONF_REMOTE_TIMEOUT]))
     # nodes.bin liegt im LittleFS von arduino-pico.
     cg.add_library("LittleFS", None)
 
@@ -208,6 +220,7 @@ async def to_code(config):
         CONF_SID_MAP_BUTTON,
         CONF_DISCOVER_BUTTON,
         CONF_REDISCOVER_BUTTON,
+        CONF_DETAILS_BUTTON,
         CONF_REGISTRY_LOG_BUTTON,
     ):
         if key in config:

@@ -27,6 +27,7 @@ class WiSafe2Component : public Component, public Transport {
   void set_auto_discovery(bool enabled) { this->auto_discovery_ = enabled; }
   void set_remote_status_interval(uint32_t ms) { this->remote_status_interval_ms_ = ms; }
   void set_battery_interval(uint32_t ms) { this->battery_interval_ms_ = ms; }
+  void set_remote_timeout(uint32_t ms) { this->scheduler_.set_remote_timeout(ms); }
   void set_status_sensor(text_sensor::TextSensor *sensor) { this->status_sensor_ = sensor; }
   void set_last_reply_sensor(text_sensor::TextSensor *sensor) { this->last_reply_sensor_ = sensor; }
   void set_rm_sid_sensor(sensor::Sensor *sensor) { this->rm_sid_sensor_ = sensor; }
@@ -57,10 +58,12 @@ class WiSafe2Component : public Component, public Transport {
   // C7 (Batterie), 72 (Fehlerdetails) oder C5 (Fehlerereignisse) an ein Gerät. Fehlen device_id ("") oder
   // model (0), kommen sie aus dem Melderregister.
   void query_device(uint8_t request_code, uint8_t sid, const std::string &device_id, uint16_t model);
-  // Button „Discover Network“: Erkundung aller SIDs, das Register bleibt erhalten.
+  // Button „Discover Network“: Erkundung der SIDs ohne vollständigen Eintrag (Geräte-ID, Klasse, Modell).
   void discover_network();
   // Button „Rediscover Network“: löscht nodes.bin und das Register und erkundet alle SIDs neu.
   void rediscover_network();
+  // Button „Netzdetails“: Remote-Status aller SIDs, Batterie und Fehler aller Melder.
+  void query_network_details();
   // Schreibt das Register ins Log, eine Zeile je Knoten.
   void log_registry();
 

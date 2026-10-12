@@ -234,8 +234,18 @@ void WiSafe2Component::discover_network() {
     ESP_LOGW(TAG, "Erkundung: RM ungekoppelt");
     return;
   }
-  ESP_LOGI(TAG, "Erkundung aller SIDs angefordert, das Register bleibt erhalten");
-  this->discovery_.request(Discovery::Scope::All);
+  ESP_LOGI(TAG, "Erkundung der SIDs ohne vollständigen Eintrag angefordert");
+  this->discovery_.request(Discovery::Scope::Identify);
+  this->query_sid_map();
+}
+
+void WiSafe2Component::query_network_details() {
+  if (!this->paired_) {
+    ESP_LOGW(TAG, "Netzdetails: RM ungekoppelt");
+    return;
+  }
+  ESP_LOGI(TAG, "Netzdetails aller SIDs angefordert");
+  this->discovery_.request(Discovery::Scope::Details);
   this->query_sid_map();
 }
 
@@ -251,7 +261,7 @@ void WiSafe2Component::rediscover_network() {
     ESP_LOGW(TAG, "Erkundung: RM ungekoppelt");
     return;
   }
-  this->discovery_.request(Discovery::Scope::All);
+  this->discovery_.request(Discovery::Scope::Identify);
   this->query_rm_status();
   this->query_sid_map();
 }
@@ -282,7 +292,7 @@ void WiSafe2Component::query_after_init_() {
   if (!this->startup_discovery_requested_) {
     // E5: beim Start nur SIDs ohne Eintrag erkunden.
     this->startup_discovery_requested_ = true;
-    this->discovery_.request(Discovery::Scope::Missing);
+    this->discovery_.request(Discovery::Scope::Identify);
   }
   this->query_rm_status();
   this->query_sid_map();
@@ -318,7 +328,7 @@ void WiSafe2Component::want_unknown_(uint64_t map) {
   for (uint8_t sid = 0; sid <= MAX_SID; ++sid) {
     if (((map >> sid) & 1u) != 0 && sid != this->own_sid_ && !this->registry_.known(sid)) {
       ESP_LOGI(TAG, "Unbekannte SID %u gemeldet, wird erkundet", sid);
-      this->discovery_.want(sid, QUERY_ALL);
+      this->discovery_.want(sid, QUERY_IDENTIFY);
     }
   }
 }
@@ -336,7 +346,8 @@ void WiSafe2Component::start_discovery_(uint64_t map) {
   if (!running) {
     this->discovery_started_ms_ = millis();
   }
-  ESP_LOGI(TAG, "Erkundung von %d SID(s) beginnt", targets);
+  ESP_LOGI(TAG, "%s von %d SID(s) beginnt, Zeitlimit je Antwort %u s", this->discovery_.campaign_name(), targets,
+           static_cast<unsigned>(this->scheduler_.remote_timeout() / 1000u));
 }
 
 bool WiSafe2Component::discovery_ready_() const {
@@ -348,6 +359,7 @@ void WiSafe2Component::enqueue_discovery_(const DiscoveryTask &task) {
   const Node *node = this->registry_.find(task.sid);
   Request request{};
   switch (task.query) {
+    case QUERY_LOCATE:
     case QUERY_REMOTE_STATUS:
       request = this->remote_status_request_(TAG_DISCOVERY, task.sid);
       break;
@@ -366,8 +378,8 @@ void WiSafe2Component::enqueue_discovery_(const DiscoveryTask &task) {
       return;
   }
   if (this->discovery_.campaign_running()) {
-    ESP_LOGI(TAG, "Erkundung SID %u (%d/%d): %s", task.sid, this->discovery_.campaign_index(),
-             this->discovery_.campaign_total(), query_name(task.query));
+    ESP_LOGI(TAG, "%s SID %u (%d/%d): %s", this->discovery_.campaign_name(), task.sid,
+             this->discovery_.campaign_index(), this->discovery_.campaign_total(), query_name(task.query));
   } else {
     ESP_LOGI(TAG, "Abfrage SID %u: %s", task.sid, query_name(task.query));
   }
@@ -387,7 +399,7 @@ void WiSafe2Component::service_discovery_(uint32_t now) {
     }
   }
   if (this->discovery_.take_finished()) {
-    ESP_LOGI(TAG, "Erkundung abgeschlossen nach %u s",
+    ESP_LOGI(TAG, "%s abgeschlossen nach %u s", this->discovery_.campaign_name(),
              static_cast<unsigned>((now - this->discovery_started_ms_) / 1000u));
     this->log_registry();
   }
@@ -524,7 +536,7 @@ void WiSafe2Component::handle_completion_(const Completion &completion) {
         break;
       }
       if (completion.outcome != Outcome::Ok) {
-        ESP_LOGI(TAG, "Erkundung SID %u: %s %s", request.node_sid, query_name(query), outcome_name(completion.outcome));
+        ESP_LOGI(TAG, "SID %u: %s %s", request.node_sid, query_name(query), outcome_name(completion.outcome));
       }
       this->discovery_.on_result(request.node_sid, query, completion.outcome);
       break;
@@ -798,6 +810,8 @@ void WiSafe2Component::dump_config() {
   } else {
     ESP_LOGCONFIG(TAG, "  auto_discovery: aus, Erkundung beim Start für SIDs ohne Eintrag und per Button");
   }
+  ESP_LOGCONFIG(TAG, "  Zeitlimit für Fernantworten: %u s",
+                static_cast<unsigned>(this->scheduler_.remote_timeout() / 1000u));
   LOG_TEXT_SENSOR("  ", "Status", this->status_sensor_);
   LOG_TEXT_SENSOR("  ", "Letzte Antwort", this->last_reply_sensor_);
   LOG_SENSOR("  ", "RM-SID", this->rm_sid_sensor_);

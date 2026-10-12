@@ -38,6 +38,11 @@ class WiSafe2RediscoverButton : public button::Button, public Parented<WiSafe2Co
   void press_action() override { this->parent_->rediscover_network(); }
 };
 
+class WiSafe2DetailsButton : public button::Button, public Parented<WiSafe2Component> {
+ protected:
+  void press_action() override { this->parent_->query_network_details(); }
+};
+
 class WiSafe2RegistryLogButton : public button::Button, public Parented<WiSafe2Component> {
  protected:
   void press_action() override { this->parent_->log_registry(); }

@@ -121,12 +121,22 @@ const Node *Registry::find_device(const uint8_t *device_id) const {
   if (device_id == nullptr || is_zero_id(device_id)) {
     return nullptr;
   }
+  // Ein RM behält die gelernte Geräte-ID, auch wenn es keinen Melder mehr trägt. Dann führt eine zweite SID
+  // dieselbe ID; der Eintrag mit Modell ist der Melder.
+  const Node *found = nullptr;
   for (size_t index = 0; index < this->count_; ++index) {
-    if (same_id(this->nodes_[index].device_id, device_id)) {
-      return &this->nodes_[index];
+    const Node &node = this->nodes_[index];
+    if (!same_id(node.device_id, device_id)) {
+      continue;
+    }
+    if (node.has_model()) {
+      return &node;
+    }
+    if (found == nullptr) {
+      found = &node;
     }
   }
-  return nullptr;
+  return found;
 }
 
 Node *Registry::get_or_add(uint8_t sid, uint8_t &changes) {

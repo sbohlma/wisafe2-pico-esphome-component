@@ -19,13 +19,15 @@ static constexpr uint32_t QUIET_MS = 500;
 static constexpr uint32_t ACK_TIMEOUT_MS = 150;
 // D2 und D4 03 kommen nach etwa 70 ms.
 static constexpr uint32_t LOCAL_REPLY_TIMEOUT_MS = 500;
-// Fernantworten kamen nach bis zu 50 s, D4 01 nach etwa 45 s.
-static constexpr uint32_t REMOTE_REPLY_TIMEOUT_MS = 55000;
+// Vorgabe für Fernantworten. Im eigenen Netz kamen sie nach 4 s bis über 3 min, D4 01 blieb aus. Einstellbar
+// über set_remote_timeout().
+static constexpr uint32_t REMOTE_REPLY_TIMEOUT_MS = 180000;
 // Kern 1 meldet das Ende eines Befehls; bleibt die Meldung aus, gilt der Befehl als nicht gesendet.
 static constexpr uint32_t SEND_TIMEOUT_MS = 1000;
-// Nach dem Init nimmt das Modul einige Sekunden lang keine Bytes an. Ein Befehl, von dem noch kein Byte
-// hinausging, wird deshalb wiederholt: bis zu 20 Versuche im Abstand von mindestens 500 ms.
-static constexpr uint8_t SEND_ATTEMPTS = 20;
+// Nach dem Init und während laufender Fernanfragen nimmt das Modul bis zu etwa 20 s lang keine Bytes an. Ein
+// Befehl, von dem noch kein Byte hinausging, wird deshalb wiederholt: bis zu 120 Versuche im Abstand von
+// mindestens 500 ms, also etwa 60 s.
+static constexpr uint8_t SEND_ATTEMPTS = 120;
 static constexpr uint32_t SEND_RETRY_DELAY_MS = 500;
 
 enum class RequestKind : uint8_t {
@@ -114,6 +116,9 @@ class Scheduler {
   explicit Scheduler(Transport &transport) : transport_(transport) {}
 
   void set_handler(Handler handler) { this->handler_ = std::move(handler); }
+  // Zeitlimit für die Antwort auf eine Fernanfrage, gerechnet ab der Quittung 46.
+  void set_remote_timeout(uint32_t ms) { this->remote_timeout_ms_ = ms; }
+  uint32_t remote_timeout() const { return this->remote_timeout_ms_; }
   // false, wenn die Warteschlange voll oder der Inhalt zu lang ist.
   bool enqueue(const Request &request);
   // sent: Anzahl der Bytes, die Kern 1 abgesetzt hat.
@@ -144,6 +149,7 @@ class Scheduler {
 
   Transport &transport_;
   Handler handler_;
+  uint32_t remote_timeout_ms_{REMOTE_REPLY_TIMEOUT_MS};
 
   Request host_queue_[HOST_QUEUE]{};
   size_t host_count_{0};
