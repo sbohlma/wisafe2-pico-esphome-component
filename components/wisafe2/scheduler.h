@@ -61,6 +61,8 @@ struct Request {
   uint8_t reply_sid{NO_SID};
   // Falls gesetzt, beendet D4 01 mit dieser SID die Anfrage als nicht erreichbar.
   uint8_t target_sid{NO_SID};
+  // SID des abgefragten Knotens für den Aufrufer, auch bei C7, 72 und C5, die über die Geräte-ID laufen.
+  uint8_t node_sid{NO_SID};
   uint32_t reply_timeout_ms{0};
   uint8_t send_attempts{0};
 
@@ -76,6 +78,10 @@ struct Request {
   }
   Request &to_sid(uint8_t sid) {
     this->target_sid = sid;
+    return *this;
+  }
+  Request &about(uint8_t sid) {
+    this->node_sid = sid;
     return *this;
   }
 

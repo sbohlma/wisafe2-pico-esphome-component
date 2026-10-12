@@ -28,5 +28,20 @@ class WiSafe2SidMapButton : public button::Button, public Parented<WiSafe2Compon
   void press_action() override { this->parent_->query_sid_map(); }
 };
 
+class WiSafe2DiscoverButton : public button::Button, public Parented<WiSafe2Component> {
+ protected:
+  void press_action() override { this->parent_->discover_network(); }
+};
+
+class WiSafe2RediscoverButton : public button::Button, public Parented<WiSafe2Component> {
+ protected:
+  void press_action() override { this->parent_->rediscover_network(); }
+};
+
+class WiSafe2RegistryLogButton : public button::Button, public Parented<WiSafe2Component> {
+ protected:
+  void press_action() override { this->parent_->log_registry(); }
+};
+
 }  // namespace wisafe2
 }  // namespace esphome

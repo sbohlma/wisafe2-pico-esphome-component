@@ -3,6 +3,7 @@
 #include "catalog.h"
 #include "core_ipc.h"
 #include "frame_analyzer.h"
+#include "node_store.h"
 #include "esphome/components/network/util.h"
 #include "esphome/core/hal.h"
 #include "esphome/core/log.h"
@@ -22,11 +23,17 @@ static constexpr uint8_t RM_STATUS_REPLY[] = {MSG_RM_STATUS};
 static constexpr uint8_t SID_MAP_PAYLOAD[] = {0xD3, 0x03};
 static constexpr uint8_t SID_MAP_REPLY[] = {MSG_RM_REPORT, 0x03};
 static constexpr uint8_t ID_INFO_REPLY[] = {0xC4};
+static constexpr uint8_t OWN_CLASS = 0xFF;
 // Gibt Log-Clients nach dem WLAN-Aufbau Zeit, sich zu verbinden.
 static constexpr uint32_t MODULE_START_DELAY_MS = 5000;
 static constexpr int INIT_ATTEMPTS = 50;
 // Nach der Quittung des Inits nimmt das Modul keine Bytes an, bis es D4 10 gemeldet hat (etwa 3 s).
 static constexpr uint32_t INIT_REPORT_TIMEOUT_MS = 10000;
+// nodes.bin: Änderungen sammeln, dann in einer Ruhephase schreiben. Das Schreiben hält Kern 1 an (R5).
+static constexpr uint32_t STORE_DELAY_MS = 5000;
+static constexpr uint32_t STORE_QUIET_MS = 1000;
+// Während einer Erkundung ist fast immer eine Fernanfrage offen; spätestens dann wird trotzdem geschrieben.
+static constexpr uint32_t STORE_FORCE_MS = 60000;
 
 static const char *const STATUS_WAIT_NETWORK = "warte auf WLAN";
 static const char *const STATUS_INIT = "Init läuft";
@@ -129,16 +136,42 @@ void WiSafe2Component::query_sid_map() {
   this->enqueue_(Request::local(TAG_SID_MAP, SID_MAP_PAYLOAD, sizeof(SID_MAP_PAYLOAD), SID_MAP_REPLY, sizeof(SID_MAP_REPLY)));
 }
 
+Request WiSafe2Component::remote_status_request_(uint8_t tag, uint8_t sid) const {
+  const uint8_t payload[] = {0xD3, 0x06, sid, 0x00};
+  const uint8_t reply[] = {MSG_RM_REPORT, 0x06, sid};
+  return Request::remote(tag, payload, sizeof(payload), reply, sizeof(reply)).to_sid(sid).about(sid);
+}
+
+Request WiSafe2Component::identity_request_(uint8_t tag, uint8_t sid) const {
+  const uint8_t payload[] = {0xD3, 0x06, sid, 0x01};
+  return Request::remote(tag, payload, sizeof(payload), ID_INFO_REPLY, sizeof(ID_INFO_REPLY))
+      .from_sid(sid)
+      .to_sid(sid)
+      .about(sid);
+}
+
+Request WiSafe2Component::device_request_(uint8_t tag, uint8_t request_code, const uint8_t *id, uint16_t model,
+                                          uint8_t sid) const {
+  uint8_t last = 0x00;
+  if (request_code == 0xC7) {
+    last = model == MODEL_WHM_1 ? 0x05 : 0x06;
+  } else if (request_code == 0xC5) {
+    last = 0x74;
+  }
+  uint8_t payload[7] = {request_code, id[0], id[1], id[2], 0, 0, last};
+  write_model(model, payload + 4);
+  const uint8_t reply[] = {static_cast<uint8_t>(request_code + 1), id[0], id[1], id[2]};
+  return Request::remote(tag, payload, sizeof(payload), reply, sizeof(reply)).about(sid);
+}
+
 void WiSafe2Component::query_remote_status(uint8_t sid) {
   if (sid > MAX_SID) {
     ESP_LOGW(TAG, "Remote-Status: SID %u ungültig (0–63)", sid);
     return;
   }
   this->start_module_();
-  const uint8_t payload[] = {0xD3, 0x06, sid, 0x00};
-  const uint8_t reply[] = {MSG_RM_REPORT, 0x06, sid};
   ESP_LOGI(TAG, "Abfrage Remote-Status SID %u", sid);
-  this->enqueue_(Request::remote(TAG_QUERY_REMOTE_STATUS, payload, sizeof(payload), reply, sizeof(reply)).to_sid(sid));
+  this->enqueue_(this->remote_status_request_(TAG_QUERY_REMOTE_STATUS, sid));
 }
 
 void WiSafe2Component::query_identity(uint8_t sid) {
@@ -147,31 +180,17 @@ void WiSafe2Component::query_identity(uint8_t sid) {
     return;
   }
   this->start_module_();
-  const uint8_t payload[] = {0xD3, 0x06, sid, 0x01};
   ESP_LOGI(TAG, "Abfrage ID-Information SID %u", sid);
-  this->enqueue_(Request::remote(TAG_QUERY_IDENTITY, payload, sizeof(payload), ID_INFO_REPLY, sizeof(ID_INFO_REPLY))
-                     .from_sid(sid)
-                     .to_sid(sid));
+  this->enqueue_(this->identity_request_(TAG_QUERY_IDENTITY, sid));
 }
 
 void WiSafe2Component::query_device(uint8_t request_code, uint8_t sid, const std::string &device_id, uint16_t model) {
-  const char *what = nullptr;
-  uint8_t last = 0;
-  switch (request_code) {
-    case 0xC7:
-      what = "Batterie";
-      break;
-    case 0x72:
-      what = "Fehlerdetails";
-      break;
-    case 0xC5:
-      what = "Fehlerereignisse";
-      last = 0x74;
-      break;
-    default:
-      ESP_LOGW(TAG, "Abfrage %02X nicht unterstützt", request_code);
-      return;
+  const uint8_t query = query_for_payload(&request_code, 1);
+  if (query == 0) {
+    ESP_LOGW(TAG, "Abfrage %02X nicht unterstützt", request_code);
+    return;
   }
+  const char *what = query_name(query);
 
   uint8_t id[3];
   bool have_id = false;
@@ -182,12 +201,15 @@ void WiSafe2Component::query_device(uint8_t request_code, uint8_t sid, const std
     }
     have_id = true;
   }
-  const NodeInfo *node = this->nodes_.get(sid);
-  if (!have_id && node != nullptr && node->has_device) {
+  const Node *node = have_id ? this->registry_.find_device(id) : this->registry_.find(sid);
+  if (have_id && node == nullptr && sid <= MAX_SID) {
+    node = this->registry_.find(sid);
+  }
+  if (!have_id && node != nullptr && node->has_device()) {
     std::memcpy(id, node->device_id, 3);
     have_id = true;
   }
-  if (model == 0 && node != nullptr && node->has_model) {
+  if (model == 0 && node != nullptr && node->has_model()) {
     model = node->model;
   }
   if (!have_id || model == 0) {
@@ -198,24 +220,239 @@ void WiSafe2Component::query_device(uint8_t request_code, uint8_t sid, const std
     this->publish_last_reply_(text);
     return;
   }
-  if (request_code == 0xC7) {
-    last = model == MODEL_WHM_1 ? 0x05 : 0x06;
-  }
 
   this->start_module_();
-  uint8_t payload[7] = {request_code, id[0], id[1], id[2], 0, 0, last};
-  write_model(model, payload + 4);
-  const uint8_t reply[] = {static_cast<uint8_t>(request_code + 1), id[0], id[1], id[2]};
   char shown[8];
   format_device_id(id, shown, sizeof(shown));
   ESP_LOGI(TAG, "Abfrage %s Gerät %s, Modell %u", what, shown, model);
-  this->enqueue_(Request::remote(TAG_QUERY_DEVICE, payload, sizeof(payload), reply, sizeof(reply)));
+  const uint8_t node_sid = node != nullptr ? node->sid : sid;
+  this->enqueue_(this->device_request_(TAG_QUERY_DEVICE, request_code, id, model, node_sid));
+}
+
+void WiSafe2Component::discover_network() {
+  if (!this->paired_) {
+    ESP_LOGW(TAG, "Erkundung: RM ungekoppelt");
+    return;
+  }
+  ESP_LOGI(TAG, "Erkundung aller SIDs angefordert, das Register bleibt erhalten");
+  this->discovery_.request(Discovery::Scope::All);
+  this->query_sid_map();
+}
+
+void WiSafe2Component::rediscover_network() {
+  ESP_LOGI(TAG, "Register und nodes.bin werden gelöscht, Erkundung aller SIDs folgt");
+  this->registry_.clear();
+  this->discovery_.clear();
+  this->store_dirty_ = false;
+  if (this->store_ok_ && !node_store_remove()) {
+    ESP_LOGW(TAG, "nodes.bin ließ sich nicht löschen");
+  }
+  if (!this->paired_) {
+    ESP_LOGW(TAG, "Erkundung: RM ungekoppelt");
+    return;
+  }
+  this->discovery_.request(Discovery::Scope::All);
+  this->query_rm_status();
+  this->query_sid_map();
+}
+
+void WiSafe2Component::log_registry() {
+  const uint32_t now = millis();
+  int members = 0;
+  int complete = 0;
+  for (size_t index = 0; index < this->registry_.count(); ++index) {
+    const Node &node = this->registry_.at(index);
+    members += node.in_network ? 1 : 0;
+    complete += node.complete() ? 1 : 0;
+  }
+  ESP_LOGI(TAG, "Register: %u Knoten, %d im Netz, %d vollständig", static_cast<unsigned>(this->registry_.count()),
+           members, complete);
+  char text[256];
+  for (uint8_t sid = 0; sid <= MAX_SID; ++sid) {
+    const Node *node = this->registry_.find(sid);
+    if (node != nullptr) {
+      describe_node(*node, now, text, sizeof(text));
+      ESP_LOGI(TAG, "  %s", text);
+    }
+  }
 }
 
 void WiSafe2Component::query_after_init_() {
   this->await_init_report_ = false;
+  if (!this->startup_discovery_requested_) {
+    // E5: beim Start nur SIDs ohne Eintrag erkunden.
+    this->startup_discovery_requested_ = true;
+    this->discovery_.request(Discovery::Scope::Missing);
+  }
   this->query_rm_status();
   this->query_sid_map();
+}
+
+void WiSafe2Component::note_changes_(uint8_t sid, uint8_t changes) {
+  if ((changes & CHANGE_IDENTITY) != 0) {
+    this->mark_dirty_();
+  }
+  const Node *node = this->registry_.find(sid);
+  if (node == nullptr) {
+    return;
+  }
+  char text[256] = "";
+  if ((changes & (CHANGE_IDENTITY | CHANGE_REACH)) != 0) {
+    describe_node(*node, millis(), text, sizeof(text));
+  }
+  if ((changes & CHANGE_DEVICE) != 0) {
+    ESP_LOGW(TAG, "Register: neue Geräte-ID für SID %u, Modell und Klasse werden neu ermittelt: %s", sid, text);
+  } else if ((changes & CHANGE_IDENTITY) != 0) {
+    ESP_LOGI(TAG, "Register: %s", text);
+  }
+  if ((changes & CHANGE_REACH) != 0) {
+    if (node->reach == Reach::Unreachable) {
+      ESP_LOGW(TAG, "SID %u nicht erreichbar", sid);
+    } else {
+      ESP_LOGI(TAG, "SID %u wieder erreichbar", sid);
+    }
+  }
+}
+
+void WiSafe2Component::want_unknown_(uint64_t map) {
+  for (uint8_t sid = 0; sid <= MAX_SID; ++sid) {
+    if (((map >> sid) & 1u) != 0 && sid != this->own_sid_ && !this->registry_.known(sid)) {
+      ESP_LOGI(TAG, "Unbekannte SID %u gemeldet, wird erkundet", sid);
+      this->discovery_.want(sid, QUERY_ALL);
+    }
+  }
+}
+
+void WiSafe2Component::start_discovery_(uint64_t map) {
+  const bool running = this->discovery_.campaign_running();
+  const int targets = this->discovery_.on_map(map, this->registry_, this->own_sid_);
+  if (targets == 0) {
+    if (!running) {
+      ESP_LOGI(TAG, "Register vollständig, keine Erkundung nötig");
+      this->log_registry();
+    }
+    return;
+  }
+  if (!running) {
+    this->discovery_started_ms_ = millis();
+  }
+  ESP_LOGI(TAG, "Erkundung von %d SID(s) beginnt", targets);
+}
+
+bool WiSafe2Component::discovery_ready_() const {
+  return this->paired_ && !this->init_pending_ && !this->await_init_report_ && !this->discovery_.busy() &&
+         !this->scheduler_.busy() && !this->scheduler_.remote_open() && this->scheduler_.pending() == 0;
+}
+
+void WiSafe2Component::enqueue_discovery_(const DiscoveryTask &task) {
+  const Node *node = this->registry_.find(task.sid);
+  Request request{};
+  switch (task.query) {
+    case QUERY_REMOTE_STATUS:
+      request = this->remote_status_request_(TAG_DISCOVERY, task.sid);
+      break;
+    case QUERY_IDENTITY:
+      request = this->identity_request_(TAG_DISCOVERY, task.sid);
+      break;
+    case QUERY_BATTERY:
+    case QUERY_FAULT_DETAILS:
+    case QUERY_FAULT_EVENTS: {
+      const uint8_t code = task.query == QUERY_BATTERY ? 0xC7 : task.query == QUERY_FAULT_DETAILS ? 0x72 : 0xC5;
+      request = this->device_request_(TAG_DISCOVERY, code, node->device_id, node->model, task.sid);
+      break;
+    }
+    default:
+      this->discovery_.on_result(task.sid, task.query, Outcome::SendFailed);
+      return;
+  }
+  if (this->discovery_.campaign_running()) {
+    ESP_LOGI(TAG, "Erkundung SID %u (%d/%d): %s", task.sid, this->discovery_.campaign_index(),
+             this->discovery_.campaign_total(), query_name(task.query));
+  } else {
+    ESP_LOGI(TAG, "Abfrage SID %u: %s", task.sid, query_name(task.query));
+  }
+  if (!this->enqueue_(request)) {
+    this->discovery_.on_result(task.sid, task.query, Outcome::SendFailed);
+  }
+}
+
+void WiSafe2Component::service_discovery_(uint32_t now) {
+  if (this->auto_discovery_) {
+    this->discovery_.tick(now, this->registry_, this->own_sid_);
+  }
+  if (this->discovery_.has_work() && this->discovery_ready_()) {
+    DiscoveryTask task;
+    if (this->discovery_.next(this->registry_, task)) {
+      this->enqueue_discovery_(task);
+    }
+  }
+  if (this->discovery_.take_finished()) {
+    ESP_LOGI(TAG, "Erkundung abgeschlossen nach %u s",
+             static_cast<unsigned>((now - this->discovery_started_ms_) / 1000u));
+    this->log_registry();
+  }
+}
+
+void WiSafe2Component::load_registry_() {
+  if (!node_store_begin()) {
+    this->store_state_ = "Dateisystem nicht verfügbar, Register nur im RAM";
+    ESP_LOGW(TAG, "%s", this->store_state_);
+    return;
+  }
+  this->store_ok_ = true;
+  uint8_t data[REGISTRY_FILE_LEN];
+  size_t read = 0;
+  switch (node_store_read(data, sizeof(data), read)) {
+    case StoreRead::Missing:
+      this->store_state_ = "nodes.bin fehlt, Register startet leer";
+      ESP_LOGI(TAG, "%s", this->store_state_);
+      return;
+    case StoreRead::Error:
+      this->store_state_ = "nodes.bin nicht lesbar, Register startet leer";
+      ESP_LOGW(TAG, "%s", this->store_state_);
+      return;
+    case StoreRead::Ok:
+      break;
+  }
+  const LoadResult result = this->registry_.deserialize(data, read);
+  if (result != LoadResult::Ok) {
+    this->store_state_ = "nodes.bin verworfen, Register startet leer";
+    ESP_LOGW(TAG, "nodes.bin verworfen (%s), Register startet leer", load_result_name(result));
+    return;
+  }
+  this->store_state_ = "aus nodes.bin geladen";
+  ESP_LOGI(TAG, "Register aus nodes.bin geladen: %u Knoten", static_cast<unsigned>(this->registry_.count()));
+}
+
+void WiSafe2Component::mark_dirty_() {
+  if (!this->store_dirty_) {
+    this->store_dirty_ = true;
+    this->store_dirty_since_ms_ = millis();
+  }
+}
+
+void WiSafe2Component::service_store_(uint32_t now) {
+  if (!this->store_dirty_ || !this->store_ok_) {
+    return;
+  }
+  const uint32_t age = now - this->store_dirty_since_ms_;
+  if (age < STORE_DELAY_MS || this->decoder_.open() || this->scheduler_.busy() ||
+      now - this->last_frame_ms_ < STORE_QUIET_MS) {
+    return;
+  }
+  if (this->scheduler_.remote_open() && age < STORE_FORCE_MS) {
+    return;
+  }
+  uint8_t data[REGISTRY_FILE_LEN];
+  const size_t len = this->registry_.serialize(data, sizeof(data));
+  const uint32_t start = millis();
+  if (len == 0 || !node_store_write(data, len)) {
+    ESP_LOGW(TAG, "nodes.bin ließ sich nicht schreiben, neuer Versuch später");
+    this->store_dirty_since_ms_ = now;
+    return;
+  }
+  this->store_dirty_ = false;
+  ESP_LOGI(TAG, "nodes.bin gespeichert: %u Plätze belegt, %u ms", data[5], static_cast<unsigned>(millis() - start));
 }
 
 void WiSafe2Component::report_query_(const Completion &completion) {
@@ -230,9 +467,8 @@ void WiSafe2Component::report_query_(const Completion &completion) {
   if (request.tag == TAG_QUERY_DEVICE) {
     char shown[8];
     format_device_id(request.payload + 1, shown, sizeof(shown));
-    const char *what = request.payload[0] == 0xC7 ? "Batterie" : request.payload[0] == 0x72 ? "Fehlerdetails"
-                                                                                           : "Fehlerereignisse";
-    std::snprintf(label, sizeof(label), "%s Gerät %s", what, shown);
+    std::snprintf(label, sizeof(label), "%s Gerät %s", query_name(query_for_payload(request.payload, request.len)),
+                  shown);
   } else {
     std::snprintf(label, sizeof(label), "%s SID %u",
                   request.tag == TAG_QUERY_REMOTE_STATUS ? "Remote-Status" : "ID-Information", request.payload[2]);
@@ -277,8 +513,22 @@ void WiSafe2Component::handle_completion_(const Completion &completion) {
     case TAG_QUERY_REMOTE_STATUS:
     case TAG_QUERY_IDENTITY:
     case TAG_QUERY_DEVICE:
-      this->report_query_(completion);
+    case TAG_DISCOVERY: {
+      const uint8_t query = query_for_payload(request.payload, request.len);
+      if (request.node_sid != NO_SID && query != 0) {
+        this->note_changes_(request.node_sid,
+                            this->registry_.on_query_result(request.node_sid, query, completion.outcome));
+      }
+      if (request.tag != TAG_DISCOVERY) {
+        this->report_query_(completion);
+        break;
+      }
+      if (completion.outcome != Outcome::Ok) {
+        ESP_LOGI(TAG, "Erkundung SID %u: %s %s", request.node_sid, query_name(query), outcome_name(completion.outcome));
+      }
+      this->discovery_.on_result(request.node_sid, query, completion.outcome);
       break;
+    }
     default:
       break;
   }
@@ -329,7 +579,7 @@ void WiSafe2Component::handle_rm_status_(const LocalMessage &msg) {
   this->update_module_status_();
 }
 
-void WiSafe2Component::handle_local_(const LocalMessage &msg) {
+void WiSafe2Component::handle_local_(const LocalMessage &msg, uint32_t now) {
   switch (msg.type) {
     case LocalType::IdentityRequest: {
       uint8_t reply[HOST_REPLY_MAX];
@@ -342,20 +592,68 @@ void WiSafe2Component::handle_local_(const LocalMessage &msg) {
       this->enqueue_(Request::host_reply(TAG_IDENTITY_REPLY, reply, len, false));
       break;
     }
-    case LocalType::RmStatus:
+    case LocalType::RmStatus: {
       // D2 kommt auch unaufgefordert etwa stündlich.
       this->handle_rm_status_(msg);
+      if (!this->paired_) {
+        break;
+      }
+      this->own_sid_ = msg.sid;
+      uint8_t changes = this->registry_.apply(msg, now);
+      if (this->identity_.valid) {
+        changes |= this->registry_.set_own(msg.sid, this->identity_.device_id, this->identity_.model, OWN_CLASS);
+      }
+      this->note_changes_(msg.sid, changes);
       break;
+    }
     case LocalType::LocalSidMap:
       this->paired_ = msg.map != 0;
       if (this->rm_paired_sensor_ != nullptr) {
         this->rm_paired_sensor_->publish_state(this->paired_);
       }
       this->update_module_status_();
+      this->note_changes_(NO_SID, this->registry_.apply(msg, now));
+      if (this->paired_ && this->discovery_.waiting_for_map()) {
+        this->start_discovery_(msg.map);
+      }
+      break;
+    case LocalType::NewNetworkMap:
+      this->note_changes_(NO_SID, this->registry_.apply(msg, now));
+      if (this->auto_discovery_) {
+        this->want_unknown_(msg.map);
+      }
+      break;
+    case LocalType::PresenceHeard:
+      this->note_changes_(msg.sid, this->registry_.apply(msg, now));
+      if (this->auto_discovery_ && msg.sid <= MAX_SID) {
+        this->want_unknown_(uint64_t{1} << msg.sid);
+      }
       break;
     case LocalType::RemoteStatus:
-    case LocalType::PresenceHeard:
-      this->nodes_.update(msg);
+      this->note_changes_(msg.sid, this->registry_.apply(msg, now));
+      break;
+    case LocalType::MissingMap: {
+      uint64_t was_unreachable = 0;
+      for (size_t index = 0; index < this->registry_.count(); ++index) {
+        const Node &node = this->registry_.at(index);
+        if (node.reach == Reach::Unreachable) {
+          was_unreachable |= uint64_t{1} << node.sid;
+        }
+      }
+      this->registry_.apply(msg, now);
+      const uint64_t newly = msg.map & ~was_unreachable;
+      for (uint8_t sid = 0; sid <= MAX_SID; ++sid) {
+        const Node *node = this->registry_.find(sid);
+        if (((newly >> sid) & 1u) != 0 && node != nullptr && node->reach == Reach::Unreachable) {
+          this->note_changes_(sid, CHANGE_REACH);
+        }
+      }
+      break;
+    }
+    case LocalType::InitReport:
+      if (msg.sid <= MAX_SID) {
+        this->own_sid_ = msg.sid;
+      }
       break;
     default:
       break;
@@ -363,7 +661,11 @@ void WiSafe2Component::handle_local_(const LocalMessage &msg) {
 }
 
 void WiSafe2Component::handle_radio_(const RadioMessage &msg, uint32_t now) {
-  this->nodes_.update(msg);
+  this->note_changes_(msg.sid, this->registry_.apply(msg, now));
+  if (this->auto_discovery_ && msg.type == RadioType::Fault && (msg.value & 0x02) != 0) {
+    // Ist 0x02 gesetzt, stehen die Einzelheiten in 73 und C6.
+    this->discovery_.want(msg.sid, QUERY_FAULT_DETAILS | QUERY_FAULT_EVENTS);
+  }
   if (!is_host_request(msg.type) || !this->identity_.valid) {
     return;
   }
@@ -381,6 +683,7 @@ void WiSafe2Component::handle_radio_(const RadioMessage &msg, uint32_t now) {
 }
 
 void WiSafe2Component::handle_frame_(const Frame &frame, uint32_t now) {
+  this->last_frame_ms_ = now;
   RadioMessage radio;
   const bool is_radio = parse_radio(frame, radio);
   const bool duplicate = is_radio && this->duplicates_.seen(radio.sid, radio.code, radio.seq, now);
@@ -395,7 +698,7 @@ void WiSafe2Component::handle_frame_(const Frame &frame, uint32_t now) {
 
   LocalMessage local;
   if (parse_local(frame, local)) {
-    this->handle_local_(local);
+    this->handle_local_(local, now);
   } else if (is_radio && !duplicate) {
     this->handle_radio_(radio, now);
   }
@@ -409,6 +712,10 @@ void WiSafe2Component::handle_frame_(const Frame &frame, uint32_t now) {
 
 void WiSafe2Component::setup() {
   this->scheduler_.set_handler([this](const Completion &completion) { this->handle_completion_(completion); });
+  if (this->auto_discovery_) {
+    this->discovery_.set_intervals(this->remote_status_interval_ms_, this->battery_interval_ms_);
+  }
+  this->load_registry_();
   ESP_LOGI(TAG, "Modulstart nach WLAN-Verbindung");
   this->publish_status_(STATUS_WAIT_NETWORK);
 }
@@ -466,6 +773,8 @@ void WiSafe2Component::loop() {
         this->query_after_init_();
       }
       this->scheduler_.service(now, this->decoder_.open());
+      this->service_discovery_(now);
+      this->service_store_(now);
       break;
   }
 }
@@ -480,6 +789,14 @@ void WiSafe2Component::dump_config() {
                   name != nullptr ? name : "");
   } else {
     ESP_LOGCONFIG(TAG, "  Identität: keine device_id, 41 und Anfragen bleiben unbeantwortet");
+  }
+  ESP_LOGCONFIG(TAG, "  Register: %u Knoten, %s", static_cast<unsigned>(this->registry_.count()), this->store_state_);
+  if (this->auto_discovery_) {
+    ESP_LOGCONFIG(TAG, "  auto_discovery: an, Remote-Status je SID alle %u min, Batterie je Melder alle %u min",
+                  static_cast<unsigned>(this->remote_status_interval_ms_ / 60000u),
+                  static_cast<unsigned>(this->battery_interval_ms_ / 60000u));
+  } else {
+    ESP_LOGCONFIG(TAG, "  auto_discovery: aus, Erkundung beim Start für SIDs ohne Eintrag und per Button");
   }
   LOG_TEXT_SENSOR("  ", "Status", this->status_sensor_);
   LOG_TEXT_SENSOR("  ", "Letzte Antwort", this->last_reply_sensor_);

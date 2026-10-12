@@ -1,10 +1,11 @@
 #pragma once
 
+#include "discovery.h"
 #include "duplicate_filter.h"
 #include "framing.h"
 #include "host_identity.h"
 #include "messages.h"
-#include "node_cache.h"
+#include "registry.h"
 #include "scheduler.h"
 #include "esphome/components/binary_sensor/binary_sensor.h"
 #include "esphome/components/sensor/sensor.h"
@@ -22,6 +23,10 @@ class WiSafe2Component : public Component, public Transport {
  public:
   // Geräte-ID in Paket-Reihenfolge und Modell-ID der Brücke (E3).
   void set_identity(uint8_t id0, uint8_t id1, uint8_t id2, uint16_t model);
+  // E5: periodische und ereignisgesteuerte Abfragen. Ohne bleibt es bei der Erkundung beim Start und per Button.
+  void set_auto_discovery(bool enabled) { this->auto_discovery_ = enabled; }
+  void set_remote_status_interval(uint32_t ms) { this->remote_status_interval_ms_ = ms; }
+  void set_battery_interval(uint32_t ms) { this->battery_interval_ms_ = ms; }
   void set_status_sensor(text_sensor::TextSensor *sensor) { this->status_sensor_ = sensor; }
   void set_last_reply_sensor(text_sensor::TextSensor *sensor) { this->last_reply_sensor_ = sensor; }
   void set_rm_sid_sensor(sensor::Sensor *sensor) { this->rm_sid_sensor_ = sensor; }
@@ -50,8 +55,14 @@ class WiSafe2Component : public Component, public Transport {
   // D3 06 sid 01: ID-Anfrage, beantwortet vom Host des Ziels mit C4.
   void query_identity(uint8_t sid);
   // C7 (Batterie), 72 (Fehlerdetails) oder C5 (Fehlerereignisse) an ein Gerät. Fehlen device_id ("") oder
-  // model (0), kommen sie aus den bisher gehörten Nachrichten der SID.
+  // model (0), kommen sie aus dem Melderregister.
   void query_device(uint8_t request_code, uint8_t sid, const std::string &device_id, uint16_t model);
+  // Button „Discover Network“: Erkundung aller SIDs, das Register bleibt erhalten.
+  void discover_network();
+  // Button „Rediscover Network“: löscht nodes.bin und das Register und erkundet alle SIDs neu.
+  void rediscover_network();
+  // Schreibt das Register ins Log, eine Zeile je Knoten.
+  void log_registry();
 
  protected:
   enum class StartState : uint8_t { WaitNetwork, Settle, Running };
@@ -64,6 +75,7 @@ class WiSafe2Component : public Component, public Transport {
     TAG_QUERY_REMOTE_STATUS,
     TAG_QUERY_IDENTITY,
     TAG_QUERY_DEVICE,
+    TAG_DISCOVERY,
   };
 
   void start_module_();
@@ -71,7 +83,7 @@ class WiSafe2Component : public Component, public Transport {
   void query_after_init_();
   bool enqueue_(const Request &request);
   void handle_frame_(const Frame &frame, uint32_t now);
-  void handle_local_(const LocalMessage &msg);
+  void handle_local_(const LocalMessage &msg, uint32_t now);
   void handle_radio_(const RadioMessage &msg, uint32_t now);
   void handle_rm_status_(const LocalMessage &msg);
   void handle_completion_(const Completion &completion);
@@ -80,7 +92,24 @@ class WiSafe2Component : public Component, public Transport {
   void publish_status_(const char *status);
   void update_module_status_();
 
+  Request remote_status_request_(uint8_t tag, uint8_t sid) const;
+  Request identity_request_(uint8_t tag, uint8_t sid) const;
+  Request device_request_(uint8_t tag, uint8_t request_code, const uint8_t *id, uint16_t model, uint8_t sid) const;
+
+  void note_changes_(uint8_t sid, uint8_t changes);
+  void want_unknown_(uint64_t map);
+  void start_discovery_(uint64_t map);
+  bool discovery_ready_() const;
+  void service_discovery_(uint32_t now);
+  void enqueue_discovery_(const DiscoveryTask &task);
+  void load_registry_();
+  void mark_dirty_();
+  void service_store_(uint32_t now);
+
   Identity identity_{};
+  bool auto_discovery_{false};
+  uint32_t remote_status_interval_ms_{0};
+  uint32_t battery_interval_ms_{0};
 
   text_sensor::TextSensor *status_sensor_{nullptr};
   text_sensor::TextSensor *last_reply_sensor_{nullptr};
@@ -97,8 +126,18 @@ class WiSafe2Component : public Component, public Transport {
   Scheduler scheduler_{*this};
   DuplicateFilter duplicates_;
   ReplyLimiter reply_limiter_;
-  NodeCache nodes_;
+  Registry registry_;
+  Discovery discovery_;
   uint8_t next_command_id_{0};
+  uint8_t own_sid_{NO_SID};
+  uint32_t last_frame_ms_{0};
+
+  bool store_ok_{false};
+  const char *store_state_{"nicht geladen"};
+  bool store_dirty_{false};
+  uint32_t store_dirty_since_ms_{0};
+  bool startup_discovery_requested_{false};
+  uint32_t discovery_started_ms_{0};
 
   bool module_started_{false};
   StartState start_state_{StartState::WaitNetwork};
