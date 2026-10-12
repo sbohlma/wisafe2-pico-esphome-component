@@ -10,7 +10,7 @@ Umgesetzt sind Stufe 0 bis Stufe 2 des [Umsetzungsplans](doc/Protokoll-Umsetzung
 
 - Stufe 0: Rahmenschicht, Maskierung und Sendeplanung, auf der Hardware abgenommen.
 - Stufe 1: alle bekannten Nachrichten lesbar im Log, Identität der Brücke im Netz, Antworten auf Anfragen an die eigene Geräte-ID, Sensoren des eigenen Funkmoduls und manuelle Abfragen. Auf der Hardware abgenommen bis auf die Testtaste.
-- Stufe 2: Melderregister mit allen Knoten, Netzerkundung, Speicherung in `nodes.bin`. Die Hardware-Abnahme steht aus.
+- Stufe 2: Melderregister mit allen Knoten, Netzerkundung und Netzdetails als getrennte Abläufe, Speicherung in `nodes.bin`. Auf der Hardware zum Teil abgenommen.
 
 Beim Start hält Kern 1 nur IRQ auf Low. Die Kommunikation mit dem Modul beginnt erst, wenn ESPHome hochgefahren und das WLAN verbunden ist. 5 s danach, damit sich Log-Clients verbinden können, fordert Kern 0 die Einrichtung des SPI-Slaves an und sendet den Init-Befehl `D3 19 50 00`. Ohne Quittung `46` wiederholt Kern 0 den Befehl bis zu 50-mal im Abstand von etwa 0,5 s. Nach der Quittung meldet das Modul nach etwa 3 s `D4 10` und nimmt bis dahin keine Bytes an. Kern 0 wartet auf diesen Rahmen, höchstens 10 s, und fragt danach den Status des eigenen Funkmoduls (`D1`) und die lokale SID-Map (`D3 03`) ab. Beides sind lokale Abfragen ohne Funkverkehr. Danach erkundet die Brücke alle SIDs ohne Eintrag im Register (siehe [Melderregister und Netzerkundung](#melderregister-und-netzerkundung)). Der Button `init_button` startet den Init jederzeit neu.
 
@@ -30,13 +30,13 @@ Die Sendeplanung auf Kern 0 schickt höchstens einen Befehl gleichzeitig und hä
 | --- | --- | --- |
 | lokale Abfrage, etwa `D1`, `D3 03` | `D2` bzw. `D4 03` | 500 ms |
 | Funkbefehl, etwa der Init | `46` (angenommen) oder `47` (abgelehnt) | 150 ms |
-| Fernanfrage | `46`, danach die Antwort aus dem Netz | 55 s |
+| Fernanfrage | `46`, danach die Antwort aus dem Netz | `remote_timeout`, Vorgabe 180 s |
 
 Antworten auf Fernanfragen ordnet die Sendeplanung genau zu: `D4 06` über die SID, `C4` über die SID am Ende des Rahmens, `C8`, `73` und `C6` über die Geräte-ID. Nach dem Init bekommt die Brücke Kopien aller Hostantworten im Netz, auch auf Anfragen anderer Knoten; diese Kopien beenden keine eigene Anfrage. Meldet das Modul `D4 01` mit der Ziel-SID, endet die Anfrage als „nicht erreichbar“.
 
 Kern 1 sendet die Bytes eines Befehls direkt hintereinander, bis zu 32 Bytes, und meldet danach zurück, ob alle Bytes abgenommen wurden. Ein Byte zum Modul hält IRQ für die Dauer dieses Bytes auf High. Beginnt das Modul innerhalb von 5 ms nicht zu takten, bricht Kern 1 den Befehl ab und meldet den Grund.
 
-Ein Befehl, von dem noch kein Byte hinausging, etwa ein Button-Druck direkt nach dem Init, wird bis zu 20-mal im Abstand von mindestens 500 ms wiederholt. Bricht ein Befehl nach dem ersten Byte ab, gilt er sofort als nicht gesendet.
+Ein Befehl, von dem noch kein Byte hinausging, etwa ein Button-Druck direkt nach dem Init, wird bis zu 120-mal im Abstand von mindestens 500 ms wiederholt, also etwa 60 s lang. Auch während laufender Fernanfragen nimmt das Modul zeitweise keine Bytes an. Bricht ein Befehl nach dem ersten Byte ab, gilt er sofort als nicht gesendet.
 
 ## Hardware
 
@@ -92,10 +92,13 @@ wisafe2:
   sid_map_button:
     name: "WiSafe2 SID-Map lesen"
   auto_discovery: false
+  remote_timeout: 180s
   discover_button:
     name: "WiSafe2 Netz erkunden"
   rediscover_button:
     name: "WiSafe2 Netz neu erkunden"
+  details_button:
+    name: "WiSafe2 Netzdetails abfragen"
   registry_log_button:
     name: "WiSafe2 Register ins Log"
 ```
@@ -221,23 +224,29 @@ Verbindet sich der Log-Client erst später, `WiSafe2 Init senden` drücken. Ein 
 
 Das Register führt bis zu 50 Knoten mit SID, Geräte-ID, Modell und Klasse, dazu im RAM Erreichbarkeit, RM-Batterie und RSSI aus `D4 06`, Melder-Batterie, Fehlerflags, Fehlerdetails, Fehlerereignisse, letzten Test, Alarm und Stummschaltung. Gehörte Nachrichten (`70`, `71`, `50`, `51`, `61`, `D2`, `D4 01`, `D4 03`, `D4 04`, `D4 09` und die Kopien von `C4`, `73`, `C6`, `C8`) aktualisieren es sofort. Anfragen anderer Knoten, etwa vom W2-MM-Dienstgerät, legen keinen Eintrag an.
 
-Eine Erkundung beginnt mit `D3 03` und fragt je SID nacheinander ab:
+Abgefragt wird in zwei getrennten Abläufen. Beide beginnen mit `D3 03` und fragen die SIDs nacheinander ab:
 
-1. `D3 06 sid 00`, Remote-Status mit Geräte-ID. Ohne Antwort entfallen die weiteren Schritte dieser SID.
-2. `D3 06 sid 01`, ID-Information mit Klasse und Modell, nur solange die Klasse fehlt. RMs ohne Melder antworten nicht und gelten danach als „RM ohne Melder“.
-3. `C7` und `72` an jeden Melder, `C5` nur an WST-630 und ST-630-DE.
+| Ablauf | Zweck | Abfragen je SID |
+| --- | --- | --- |
+| Erkundung | Kennung für `nodes.bin`: Geräte-ID, Klasse, Modell. Ändert sich nur, wenn ein Melder getauscht wird | `D3 06 sid 00` (Remote-Status), nur solange die Geräte-ID fehlt; danach `D3 06 sid 01` (ID-Information), solange die Klasse fehlt |
+| Netzdetails | Werte, die sich ändern | `D3 06 sid 00` an jede SID, dann `C7` und `72` an jeden erreichbaren Melder, `C5` nur an WST-630 und ST-630-DE |
 
-Es läuft immer nur eine Fernanfrage. Eine vollständige Erkundung von gut 20 Knoten dauert 10–20 min. Das Log zählt mit, etwa `Erkundung SID 3 (2/21): Batterie`, und gibt am Ende Dauer und Register aus.
+Bleibt der Remote-Status ohne Antwort, entfallen die weiteren Schritte dieser SID. RMs ohne Melder beantworten die ID-Information nicht und gelten danach als „RM ohne Melder“.
+
+Es läuft immer nur eine Fernanfrage, und die Brücke wartet auf deren Antwort bis zum Zeitlimit `remote_timeout` (Vorgabe 180 s, einstellbar von 30 s bis 10 min). Im eigenen Netz kamen Antworten nach 4 s bis über 3 min; mit 55 s liefen viele Anfragen ins Leere, und die Antworten stauten sich mit den folgenden Anfragen. Eine Antwort nach dem Zeitlimit trägt die Brücke trotzdem ins Register ein. Das Log zählt mit, etwa `Erkundung SID 3 (2/21): ID-Information` oder `Netzdetails SID 3 (2/21): Batterie`, und gibt am Ende Dauer und Register aus.
+
+Die Erkundung braucht je Melder meist unter einer Minute. Jede SID ohne Antwort kostet das volle Zeitlimit, mit der Vorgabe also 3 min. Die Netzdetails brauchen deutlich länger, weil Fehlerdetails und Fehlerereignisse oft erst nach 30–100 s kommen.
 
 | | `auto_discovery: false` (Vorgabe) | `auto_discovery: true` |
 | --- | --- | --- |
 | Start | Register aus `nodes.bin` laden, Erkundung nur für SIDs ohne vollständigen Eintrag | wie links |
-| `discover_button` | Erkundung aller SIDs, das Register bleibt erhalten | wie links |
+| `discover_button` | Erkundung der SIDs ohne vollständigen Eintrag, das Register bleibt erhalten | wie links |
 | `rediscover_button` | löscht Register und `nodes.bin`, dann Erkundung aller SIDs | wie links |
+| `details_button` | Netzdetails aller SIDs | wie links |
 | periodisch | keine Abfragen | Remote-Status reihum je SID alle `remote_status_interval` (Vorgabe `19h`), Batterie je Melder alle `battery_interval` (Vorgabe `24h`), gleichmäßig verteilt, erste Runde 15 min nach dem Start |
 | nach Ereignissen | keine Abfragen | `72` und `C5` nach `71` mit Flag „fehlerhaft“; Erkundung neuer SIDs aus `D4 04` und `D4 09` |
 
-Die Intervalle sind von 10 min bis 20 Tage einstellbar. Ein Knoten gilt als nicht erreichbar nach `D4 01` oder zwei ausbleibenden Antworten in Folge; entfernt wird er nur über `rediscover_button`.
+Die Intervalle sind von 10 min bis 20 Tage einstellbar. Ein Knoten gilt als nicht erreichbar nach `D4 01` oder zwei ausbleibenden Antworten in Folge; entfernt wird er nur über `rediscover_button`. `D4 01` kam im eigenen Netz bisher nie, es zählen also die ausbleibenden Antworten.
 
 `registry_log_button` schreibt das Register ins Log, eine Zeile je Knoten, etwa:
 
@@ -284,7 +293,7 @@ Fehler auf Kern 1, etwa eine volle Warteschlange oder ein SPI-Überlauf, kommen 
 
 ## Tests
 
-Rahmenschicht, Nachrichten, Modelltabellen, Duplikatfilter, Antworten des Hosts, Sendeplanung, Melderregister mit `nodes.bin`-Format, Erkundung und Log-Text lassen sich ohne Hardware auf dem PC prüfen:
+Rahmenschicht, Nachrichten, Modelltabellen, Duplikatfilter, Antworten des Hosts, Sendeplanung, Melderregister mit `nodes.bin`-Format, Erkundung, Netzdetails und Log-Text lassen sich ohne Hardware auf dem PC prüfen:
 
 ```sh
 make -C tests/host
