@@ -1,6 +1,6 @@
 # Umsetzungsplan: W2-Modulprotokoll auf der Pico-2-W-Brücke
 
-Stand: 12.10.2026, Entscheidungen E1–E12 getroffen, E3 und E7 überarbeitet, Stufe 0 umgesetzt und auf der Hardware abgenommen, Init-Sequenz korrigiert (Abschnitt 9), Stufe 1 im Code umgesetzt. Grundlage ist [PROTOCOL_ANALYSIS_W2_MODULE.md](https://github.com/sbohlma/FireAngel/blob/main/wisafe-mm/docs/PROTOCOL_ANALYSIS_W2_MODULE.md) (im Folgenden „Protokollanalyse“) mit den dort genannten Quellen, vor allem NikNakks [fireangel-pro-connected-esphome](https://github.com/NikNakk/fireangel-pro-connected-esphome), Tho85s [ws2mqtt](https://github.com/Tho85/ws2mqtt) und [wisafe-mm](https://github.com/sbohlma/FireAngel/tree/main/wisafe-mm).
+Stand: 12.10.2026, Entscheidungen E1–E12 getroffen, E3 und E7 überarbeitet, Stufe 0 umgesetzt und auf der Hardware abgenommen, Init-Sequenz korrigiert (Abschnitt 9), Stufe 1 im Code umgesetzt und zum Teil auf der Hardware abgenommen. Grundlage ist [PROTOCOL_ANALYSIS_W2_MODULE.md](https://github.com/sbohlma/FireAngel/blob/main/wisafe-mm/docs/PROTOCOL_ANALYSIS_W2_MODULE.md) (im Folgenden „Protokollanalyse“) mit den dort genannten Quellen, vor allem NikNakks [fireangel-pro-connected-esphome](https://github.com/NikNakk/fireangel-pro-connected-esphome), Tho85s [ws2mqtt](https://github.com/Tho85/ws2mqtt) und [wisafe-mm](https://github.com/sbohlma/FireAngel/tree/main/wisafe-mm).
 
 Ziel: Alle Melder im Netz erscheinen in ESPHome und Home Assistant mit Zustand, Fehlern, Batterie und Ereignissen. Diagnose und Netztest stehen als Funktionen bereit.
 
@@ -80,7 +80,7 @@ Abnahme auf der Hardware (erledigt am 12.10.2026):
 
 ### Stufe 1: Vollständiges Parsing, Identität und manuelle Abfragen
 
-Stand: im Code umgesetzt (`catalog`, `messages`, `frame_analyzer`, `duplicate_filter`, `host_identity`, `node_cache`, Aktionen in `automation.h`, Host-Tests unter `tests/host`). Die Abnahme auf der Hardware steht aus.
+Stand: im Code umgesetzt (`catalog`, `messages`, `frame_analyzer`, `duplicate_filter`, `host_identity`, `node_cache`, Aktionen in `automation.h`, Host-Tests unter `tests/host`). Die Abnahme auf der Hardware läuft seit dem 12.10.2026, drei von fünf Punkten sind erfüllt.
 
 Ziel: Jede bekannte Nachricht wird verstanden und lesbar geloggt. Die Brücke tritt mit eigener Identität im Netz auf. Jede lesende Abfrage lässt sich von Hand auslösen.
 
@@ -116,13 +116,13 @@ Umsetzung im Detail:
 - `C1` trägt keine Geräte-ID. Wird es geflutet, weil das Ziel abgenommen ist, antwortet auch die Brücke mit `C2` (höchstens einmal je 60 s) **[R12]**.
 - Neue YAML-Optionen: `device_id`, `model` (Vorgabe `0x0311`), Sensoren `last_reply`, `rm_sid`, `rm_battery`, `rm_rssi`, `rm_radio_faults`, `rm_firmware`, `rm_device_id`, `rm_paired`.
 
-Abnahme:
+Abnahme (Stand 12.10.2026, Log 02:48–03:02):
 
-- Testtaste an einem Melder ergibt einen vollständig gedeuteten `70`-Rahmen.
-- Melder vom Sockel nehmen ergibt `71` mit Flags.
-- Handabfragen liefern `D4 06`, `C4`, `C8`, `73`.
-- `D1` zeigt im Feld d6–d8 die ID aus der YAML (`A5 B8 14`), ohne Warnung.
-- Eine ID-Anfrage eines anderen Knotens an die Brücke erhält `C4`.
+- Testtaste an einem Melder ergibt einen vollständig gedeuteten `70`-Rahmen. Offen.
+- Melder vom Sockel nehmen ergibt `71` mit Flags. Erfüllt: SID 14 und SID 26, jeweils Flags `01` (abgenommen, kalibriert). Offen ist noch `71 … 05` nach dem Zurücksetzen.
+- Handabfragen liefern `D4 06`, `C4`, `C8`, `73`. Offen, die Aktionen brauchen `api:` mit `actions` in der YAML.
+- `D1` zeigt im Feld d6–d8 die ID aus der YAML (`A5 B8 14`), ohne Warnung. Erfüllt.
+- Eine ID-Anfrage eines anderen Knotens an die Brücke erhält `C4`. Erfüllt: Der W2-MM-Dongle (SID 15) fragte `C3`, `C7`, `C5` und `72` und erhielt `C4`, `C8`, `C6` und `73`. Das W2-MM zeigt die Brücke korrekt an (Abschnitt 9, P7 und P8).
 
 ### Stufe 2: Melderregister und Netzerkundung
 
@@ -308,7 +308,7 @@ Getroffen am 11.10.2026.
 
 ## 8. Nächster Schritt
 
-Hardware-Abnahme von Stufe 1 (Abschnitt 3). Danach folgt Stufe 2 nach Freigabe.
+Rest der Hardware-Abnahme von Stufe 1 (Abschnitt 3): Testtaste, Melder zurück auf den Sockel, Handabfragen über `api: actions`. Danach folgt Stufe 2 nach Freigabe.
 
 ## 9. Neue Erkenntnisse zum Protokoll
 
@@ -382,3 +382,30 @@ Beobachtung, Deutung der Felder nach der Protokollanalyse.
 - d11 enthält die eigene SID, gleich d10 in `D4 10` (P2).
 - d12 (in R3 als vermutet geführt) ist in allen Mitschnitten `00`.
 - RSSI schwankt zwischen den Starts um 14 Stufen, BVWL um eine Stufe.
+
+### P7: Hostantworten `C4`, `C8`, `C6` und `73` kommen beim Anfragenden an
+
+Bestätigt am 12.10.2026, Ende-zu-Ende über das W2-MM geprüft. Die Protokollanalyse führt `73`, `C8` und `C6` bisher als „ungeprüft“.
+
+| Anfrage von SID 15 | Antwort der Brücke |
+| --- | --- |
+| `C3 00 00 00 0F 0B` | `C4 A5 B8 14 FF 11 03` |
+| `C7 A5 B8 14 11 03 06 7E 0F 0D` | `C8 A5 B8 14 06 B8 0B 00 00` (3000 mV) |
+| `C5 A5 B8 14 11 03 74 7E 0F 0E` | `C6 A5 B8 14 74 00 00 00 00` |
+| `72 A5 B8 14 11 03 00 7E 0F 0F` | `73 A5 B8 14 11 03 00 00` |
+
+- Das RM quittiert jede dieser Antworten mit genau einem `46`.
+- Das W2-MM zeigt danach für Knoten 20: Modell WST-630, Geräte-ID 14B8A5, Klasse `FF` („all“), Batterie 3000 mV, Fault details `0x0000` (alle Bits OK), Fault events „none“. Damit sind die Formate der Hostantworten in der Protokollanalyse bestätigt, einschließlich mV = d6<<8 | d5 in `C8` und FS = d7<<8 | d6 in `73`.
+- Das W2-MM zeigt zusätzlich RM-Spannung 3,02 V, Firmware `EF`, „Status RSSI“ 91 und eine Remote-SID-Map gleich `D4 03`. Diese Werte liefert das RM selbst, ohne den Host: Die Brücke sah dazu keinen Rahmen. 3,02 V passt zur Formel U = 1048,576 / (BVNL + 285) V mit BVNL `3E`. Das `D2` dieses Starts zeigte `3D` (3,03 V).
+- Die Sequenznummern von SID 15 an die Brücke laufen 11, 13, 14, 15. Folge 12 war vermutlich eine dieser Anfragen, die das RM selbst beantwortet (etwa der Remote-Status, den ein Host mit `D3 06 14 00` anfragt). Vermutet.
+- Die Zeitstempel dieses Logs vergibt der Log-Client beim Empfang. Ohne `api:` liest er über `/events` des web_server, und die Zeilen kommen gebündelt an. Laufzeiten misst erst ein Log über die native API.
+
+### P8: SID 15 ist ein W2-MM-Service-Dongle außerhalb der SID-Maps
+
+Bestätigt durch den Nutzer und das Log vom 12.10.2026.
+
+- SID 15 gehört zu einem FireAngel-W2-MM-Service-Dongle für die Diagnose. Er sendet Anfragen ins Netz und empfängt die Antworten.
+- SID 15 steht weder in `D4 03` (Mitgliedschaft, P4) noch in `D4 10` (Init-Antworten, P3). Das W2-MM ist also Teilnehmer ohne Eintrag in den SID-Maps der RMs. Das passt zur Protokollanalyse: Ein solcher Teilnehmer kann seine SID an ein neu eingelerntes RM verlieren, dort beobachtet als Doppelvergabe von SID 15.
+- Die geräteadressierten Anfragen des W2-MM (`C7`, `C5`, `72`) tragen vor SID und seq das zusätzliche Byte `7E`, die ID-Anfrage `C3` trägt es nicht. Die Protokollanalyse nennt dieses Byte für „Anfragen mancher Absender“, ihr Beispiel `72 … 00 7E 0F 04` stammt ebenfalls von SID 15. Der Absender mit dem zusätzlichen `7E` ist damit, zumindest in diesem Netz, das W2-MM.
+- Erkundungsablauf des W2-MM gegen die Brücke: `C3`, `C7`, `C5`, `72` in dieser Reihenfolge, laut Log zwischen 02:52 und 02:56 (Zeiten gebündelt, siehe P7).
+- Vorschlag für Stufe 2, zur Entscheidung: Anfragen von SIDs außerhalb von `D4 03` lösen keine Erkundung aus, und das Register legt für sie keinen Melder an. Die Brücke protokolliert sie als Dienstgerät.
