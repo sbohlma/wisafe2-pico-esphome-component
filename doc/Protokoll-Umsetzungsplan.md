@@ -1,6 +1,6 @@
 # Umsetzungsplan: W2-Modulprotokoll auf der Pico-2-W-Brücke
 
-Stand: 12.10.2026, Entscheidungen E1–E12 getroffen, E3 und E7 überarbeitet, Stufe 0 umgesetzt und auf der Hardware abgenommen, Init-Sequenz korrigiert (Abschnitt 9). Grundlage ist [PROTOCOL_ANALYSIS_W2_MODULE.md](https://github.com/sbohlma/FireAngel/blob/main/wisafe-mm/docs/PROTOCOL_ANALYSIS_W2_MODULE.md) (im Folgenden „Protokollanalyse“) mit den dort genannten Quellen, vor allem NikNakks [fireangel-pro-connected-esphome](https://github.com/NikNakk/fireangel-pro-connected-esphome), Tho85s [ws2mqtt](https://github.com/Tho85/ws2mqtt) und [wisafe-mm](https://github.com/sbohlma/FireAngel/tree/main/wisafe-mm).
+Stand: 12.10.2026, Entscheidungen E1–E12 getroffen, E3 und E7 überarbeitet, Stufe 0 umgesetzt und auf der Hardware abgenommen, Init-Sequenz korrigiert (Abschnitt 9), Stufe 1 im Code umgesetzt. Grundlage ist [PROTOCOL_ANALYSIS_W2_MODULE.md](https://github.com/sbohlma/FireAngel/blob/main/wisafe-mm/docs/PROTOCOL_ANALYSIS_W2_MODULE.md) (im Folgenden „Protokollanalyse“) mit den dort genannten Quellen, vor allem NikNakks [fireangel-pro-connected-esphome](https://github.com/NikNakk/fireangel-pro-connected-esphome), Tho85s [ws2mqtt](https://github.com/Tho85/ws2mqtt) und [wisafe-mm](https://github.com/sbohlma/FireAngel/tree/main/wisafe-mm).
 
 Ziel: Alle Melder im Netz erscheinen in ESPHome und Home Assistant mit Zustand, Fehlern, Batterie und Ereignissen. Diagnose und Netztest stehen als Funktionen bereit.
 
@@ -80,9 +80,11 @@ Abnahme auf der Hardware (erledigt am 12.10.2026):
 
 ### Stufe 1: Vollständiges Parsing, Identität und manuelle Abfragen
 
+Stand: im Code umgesetzt (`catalog`, `messages`, `frame_analyzer`, `duplicate_filter`, `host_identity`, `node_cache`, Aktionen in `automation.h`, Host-Tests unter `tests/host`). Die Abnahme auf der Hardware steht aus.
+
 Ziel: Jede bekannte Nachricht wird verstanden und lesbar geloggt. Die Brücke tritt mit eigener Identität im Netz auf. Jede lesende Abfrage lässt sich von Hand auslösen.
 
-- Decoder für alle Typen der Protokollanalyse: `50`, `51`, `61`, `70`, `71`, `72`, `73`, `C1` bis `C8`, `D2`, `D4 01/03/04/06/09/11`, `D5`. Unbekannte Typen und Untertypen wie `D4 10` als `Roh:` **[E9]**.
+- Decoder für alle Typen der Protokollanalyse: `50`, `51`, `61`, `70`, `71`, `72`, `73`, `C1` bis `C8`, `D2`, `D4 01/03/04/06/09/10/11`, `D5`. `D4 10` erscheint als Liste der Init-Antworten mit eigener SID (P2, P3), ohne Einfluss auf das Register **[E9]**. Unbekannte Typen und Untertypen als `Roh:`.
 - Feldauswertung: Geräte-ID in Anzeigereihenfolge, Modelltabelle mit allen 14 Modellen der Protokollanalyse (`11 04` = WHT-630 **[E12]**), Klassen, Fehlerflags `71`, Fehlerdetails `73` je Modell, Batterie `C8` in mV, RM-Batterie nach U = 1048,576 / (BVNL + 285) V, RSSI.
 - Entfernen von Duplikaten über (SID, Typ, Sequenznummer) mit einem Fenster von 60 s.
 - Eigenes RM: `D1` und `D3 03` beim Start und auf Abruf. Daraus entstehen Sensoren für eigene SID, Kopplung, RM-Batterie, RSSI, Firmware, gelernte Geräte-ID und Funkfehler.
@@ -105,6 +107,14 @@ Ziel: Jede bekannte Nachricht wird verstanden und lesbar geloggt. Die Brücke tr
   - `wisafe2.query_identity` mit `sid` (`D3 06 sid 01`)
   - `wisafe2.query_battery`, `wisafe2.query_fault_details`, `wisafe2.query_fault_events` mit SID; Geräte-ID und Modell kommen aus dem Register oder als Parameter (`C7`, `72`, `C5`)
 - Die Antworten erscheinen im Log und als Text-Sensor „letzte Antwort“.
+
+Umsetzung im Detail:
+
+- Bis zum Melderregister aus Stufe 2 merkt sich ein kleiner Speicher im RAM (`node_cache`) Geräte-ID, Modell und Klasse je SID aus gehörten Nachrichten. Damit brauchen `query_battery`, `query_fault_details` und `query_fault_events` nur die SID, sobald der Knoten einmal mit Geräte-ID und Modell gehört wurde.
+- Antworten werden genau zugeordnet: `D4 06` über die SID, `C4` über die SID am Rahmenende, `C8`, `73` und `C6` über die Geräte-ID. Kopien von Hostantworten auf Anfragen anderer Knoten beenden so keine eigene Anfrage.
+- `D4 01` mit der Ziel-SID beendet `D3 06` als „nicht erreichbar“ **[E8]**.
+- `C1` trägt keine Geräte-ID. Wird es geflutet, weil das Ziel abgenommen ist, antwortet auch die Brücke mit `C2` (höchstens einmal je 60 s) **[R12]**.
+- Neue YAML-Optionen: `device_id`, `model` (Vorgabe `0x0311`), Sensoren `last_reply`, `rm_sid`, `rm_battery`, `rm_rssi`, `rm_radio_faults`, `rm_firmware`, `rm_device_id`, `rm_paired`.
 
 Abnahme:
 
@@ -274,7 +284,7 @@ Getroffen am 11.10.2026.
 | E6 | Wie werden die Melder zu Entitäten? | Melder in der YAML auflisten, Vorlage aus dem Log, dazu das Register als JSON-Text-Sensor. Alles über die native API |
 | E7 | Melderregister speichern? | Ja, als Binärdatei `nodes.bin` mit festen 50 Plätzen (408 Byte), nur bei Änderung, gebündelt. Button „Rediscover Network“ löscht das Register und erkundet neu |
 | E8 | Wann gilt ein Knoten als nicht erreichbar? | Nach `D4 01` oder zwei ausbleibenden Antworten in Folge. Entfernen nur über „Rediscover Network“ |
-| E9 | Unbekannter Rahmen `D4 10 BF 7F 0E 05 00 00 00 00 14`? | Weiter mitschneiden, roh loggen, Auswertung erst bei geklärter Bedeutung. Nachtrag 12.10.2026: Format und wahrscheinliche Bedeutung in P2 und P3. Die Brücke nutzt `D4 10` als Bereitschaftssignal nach dem Init (P1) |
+| E9 | Unbekannter Rahmen `D4 10 BF 7F 0E 05 00 00 00 00 14`? | Weiter mitschneiden, roh loggen, Auswertung erst bei geklärter Bedeutung. Nachtrag 12.10.2026: Format und wahrscheinliche Bedeutung in P2 und P3. Die Brücke nutzt `D4 10` als Bereitschaftssignal nach dem Init (P1). Ab Stufe 1 wird `D4 10` lesbar geloggt, etwa „Init-Antworten: 20 Knoten (…), eigene SID 20“. Ins Register geht es vorerst nicht ein |
 | E10 | Netzverändernde Befehle? | Vorerst ausgeschlossen. Ein Pairing-Assistent ist als Stufe 5 vorgemerkt |
 | E11 | Beim Senden maskieren? | Ja. Bei SIDs oder IDs mit `7D`/`7E` wird gezielt geprüft |
 | E12 | Modell `11 04`? | WHT-630. Der FP1720W2-R ist ein Kit, das den WHT-630 mit Funkmodul enthält |
@@ -298,7 +308,7 @@ Getroffen am 11.10.2026.
 
 ## 8. Nächster Schritt
 
-Stufe 1 nach Freigabe: vollständiges Parsing, Identität und manuelle Abfragen.
+Hardware-Abnahme von Stufe 1 (Abschnitt 3). Danach folgt Stufe 2 nach Freigabe.
 
 ## 9. Neue Erkenntnisse zum Protokoll
 
