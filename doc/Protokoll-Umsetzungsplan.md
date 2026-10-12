@@ -80,7 +80,7 @@ Abnahme auf der Hardware (erledigt am 12.10.2026):
 
 ### Stufe 1: Vollständiges Parsing, Identität und manuelle Abfragen
 
-Stand: im Code umgesetzt (`catalog`, `messages`, `frame_analyzer`, `duplicate_filter`, `host_identity`, `node_cache`, Aktionen in `automation.h`, Host-Tests unter `tests/host`). Die Abnahme auf der Hardware läuft seit dem 12.10.2026, drei von fünf Punkten sind erfüllt.
+Stand: im Code umgesetzt (`catalog`, `messages`, `frame_analyzer`, `duplicate_filter`, `host_identity`, Aktionen in `automation.h`, Host-Tests unter `tests/host`). Die Abnahme auf der Hardware ist bis auf die Testtaste erfüllt (vier von fünf Punkten, Stand 12.10.2026).
 
 Ziel: Jede bekannte Nachricht wird verstanden und lesbar geloggt. Die Brücke tritt mit eigener Identität im Netz auf. Jede lesende Abfrage lässt sich von Hand auslösen.
 
@@ -110,21 +110,23 @@ Ziel: Jede bekannte Nachricht wird verstanden und lesbar geloggt. Die Brücke tr
 
 Umsetzung im Detail:
 
-- Bis zum Melderregister aus Stufe 2 merkt sich ein kleiner Speicher im RAM (`node_cache`) Geräte-ID, Modell und Klasse je SID aus gehörten Nachrichten. Damit brauchen `query_battery`, `query_fault_details` und `query_fault_events` nur die SID, sobald der Knoten einmal mit Geräte-ID und Modell gehört wurde.
+- Geräte-ID und Modell für `query_battery`, `query_fault_details` und `query_fault_events` kommen aus dem Melderregister (`registry`, Stufe 2). Die Aktionen brauchen damit nur die SID, sobald der Knoten einmal mit Geräte-ID und Modell bekannt ist. Der Zwischenspeicher `node_cache` aus der ersten Fassung von Stufe 1 ist im Register aufgegangen.
 - Antworten werden genau zugeordnet: `D4 06` über die SID, `C4` über die SID am Rahmenende, `C8`, `73` und `C6` über die Geräte-ID. Kopien von Hostantworten auf Anfragen anderer Knoten beenden so keine eigene Anfrage.
 - `D4 01` mit der Ziel-SID beendet `D3 06` als „nicht erreichbar“ **[E8]**.
 - `C1` trägt keine Geräte-ID. Wird es geflutet, weil das Ziel abgenommen ist, antwortet auch die Brücke mit `C2` (höchstens einmal je 60 s) **[R12]**.
 - Neue YAML-Optionen: `device_id`, `model` (Vorgabe `0x0311`), Sensoren `last_reply`, `rm_sid`, `rm_battery`, `rm_rssi`, `rm_radio_faults`, `rm_firmware`, `rm_device_id`, `rm_paired`.
 
-Abnahme (Stand 12.10.2026, Log 02:48–03:02):
+Abnahme (Stand 12.10.2026, Logs 02:48–03:02 und 03:39–04:30):
 
-- Testtaste an einem Melder ergibt einen vollständig gedeuteten `70`-Rahmen. Offen.
-- Melder vom Sockel nehmen ergibt `71` mit Flags. Erfüllt: SID 14 und SID 26, jeweils Flags `01` (abgenommen, kalibriert). Offen ist noch `71 … 05` nach dem Zurücksetzen.
-- Handabfragen liefern `D4 06`, `C4`, `C8`, `73`. Offen, die Aktionen brauchen `api:` mit `actions` in der YAML.
+- Testtaste an einem Melder ergibt einen vollständig gedeuteten `70`-Rahmen. Offen, folgt mit dem Meldertest.
+- Melder vom Sockel nehmen ergibt `71` mit Flags. Erfüllt: SID 14 und SID 26 mit Flags `01` (abgenommen, kalibriert). SID 14 zusätzlich mit beiden Richtungen in einem Lauf: `71 3D E4 2F 7C 04 01 0E 0A` um 04:29:37 (Folge 10), zurück auf dem Sockel `71 … 05 0E 0B` um 04:30:30 (Folge 11, auf Sockel, kalibriert). Die Kopie von Folge 10 in derselben Millisekunde erkennt der Duplikatfilter.
+- Handabfragen liefern `D4 06`, `C4`, `C8`, `73`. Erfüllt über `api: actions` an SID 14 (ST-630-DE, Gerät 2FE43D): `C4` nach 3,2 s, `D4 06` nach 21 s, `C8` mit 2954 mV nach 6,4 s, `73` mit FS `0000` nach 9,5 s. Jede Antwort beendet genau ihre Anfrage, Geräte-ID und Modell für `C7` und `72` kamen aus den vorher gehörten Antworten (Abschnitt 9, P9).
 - `D1` zeigt im Feld d6–d8 die ID aus der YAML (`A5 B8 14`), ohne Warnung. Erfüllt.
 - Eine ID-Anfrage eines anderen Knotens an die Brücke erhält `C4`. Erfüllt: Der W2-MM-Dongle (SID 15) fragte `C3`, `C7`, `C5` und `72` und erhielt `C4`, `C8`, `C6` und `73`. Das W2-MM zeigt die Brücke korrekt an (Abschnitt 9, P7 und P8).
 
 ### Stufe 2: Melderregister und Netzerkundung
+
+Stand: im Code umgesetzt (`registry`, `discovery`, `node_store`, Buttons in `buttons.h`, Host-Tests `test_registry.cpp` und `test_discovery.cpp`, 620 Prüfungen). Die Abnahme auf der Hardware folgt.
 
 Ziel: Die Brücke kennt alle Knoten des Netzes und hält deren Zustand aktuell.
 
@@ -185,7 +187,7 @@ Persistenz **[E7]**:
   | Byte | Inhalt |
   | --- | --- |
   | 0 | SID; `FF` = Platz frei |
-  | 1 | Flags: Bit 0 Gateway-RM, Bit 1 Typ unbekannt (RM ohne Melder) |
+  | 1 | Flags: Bit 0 Gateway-RM, Bit 1 Typ unbekannt (RM ohne Melder), Bit 2 eigenes RM der Brücke |
   | 2–4 | Geräte-ID in Paket-Reihenfolge |
   | 5–6 | Modell-ID in Paket-Reihenfolge |
   | 7 | Klasse |
@@ -194,11 +196,31 @@ Persistenz **[E7]**:
 - Geschrieben wird nur bei Änderung von Geräte-ID, Modell oder Klasse, gebündelt mit einer Verzögerung von einigen Sekunden.
 - Button „Rediscover Network“: löscht `nodes.bin` und das Register im RAM und startet eine vollständige Erkundung.
 
+Umsetzung im Detail:
+
+- `registry` (Kern 0, ohne ESPHome-Header, auf dem Host getestet) führt 50 Plätze. Gespeichert werden SID, Flags, Geräte-ID, Modell und Klasse; alles Weitere lebt nur im RAM: im Netz, Erreichbarkeit, ausgebliebene Antworten, zuletzt gesehen, RM-Werte aus `D4 06`, Melder-Batterie, Fehlerflags, Fehlerdetails, Fehlerereignisse, letzter Test, Alarm und Stummschaltung.
+- Regeln der passiven Auswertung:
+  - Die Klasse kommt nur aus `70`, `C4` und `C2`; `71`, `73`, `C8` und `C6` liefern Geräte-ID und Modell.
+  - Anfragen anderer Knoten (`72`, `C3`, `C5`, `C7`, `C1`) legen keinen Platz an. Der W2-MM-Dongle (SID 15, P8) erscheint damit nicht im Register.
+  - Meldet eine SID eine neue Geräte-ID, setzt das Register Modell, Klasse und Melderwerte zurück und protokolliert eine Warnung. Die nächste Erkundung ermittelt sie neu.
+  - `61` setzt nur „stummgeschaltet“; als beendet gilt ein Alarm erst mit `51`.
+  - `D4 09` mit SID 0 und der Gateway-ID `01 02 03` wird übergangen, eine Gateway-ID an einer echten SID setzt das Flag „Gateway-RM“.
+  - `D2` und `D4 10` liefern die eigene SID. Das eigene RM bekommt das Flag „eigenes RM“ (Bit 2) und die Identität aus der YAML und wird nie abgefragt.
+- Erreichbarkeit **[E8]**: Jede Nachricht der SID und jede Antwort setzt „erreichbar“ und den Zähler zurück. `D4 01` setzt sofort „nicht erreichbar“, sonst nach zwei Zeitüberschreitungen in Folge. Bleibt nur `C4` aus, zählt das nicht: Das Register setzt dann „Typ unbekannt“.
+- `discovery` plant die Abfragen je SID in der Reihenfolge Remote-Status, ID-Information, Batterie, Fehlerdetails, Fehlerereignisse. Vor jeder Abfrage wird erneut geprüft, ob sie nötig ist: ID-Information nur ohne Klasse, `C7` und `72` nur für Melder, `C5` nur für WST-630 und ST-630-DE, Gerätefragen nicht an unerreichbare Knoten. Scheitert der Remote-Status oder lehnt das RM mit `47` ab, entfallen die übrigen Schritte dieser SID.
+- Eine Erkundung beginnt mit `D3 03`. „Missing“ (Start) nimmt nur SIDs ohne vollständigen Eintrag, „All“ (Buttons) alle SIDs der Karte außer der eigenen. Vollständig heißt: Geräte-ID und Klasse bekannt, oder Gateway-RM, oder Typ unbekannt. Das Log zählt mit („Erkundung SID 3 (2/21): Batterie“) und gibt am Ende Dauer und Register aus.
+- Periodik (nur `auto_discovery: true`): erste Runde 15 min nach dem Start, danach reihum je ein Knoten im Abstand Intervall geteilt durch die Zahl passender Knoten. Remote-Status gilt allen Netzmitgliedern außer dem eigenen RM, also auch unerreichbaren, damit sie wieder als erreichbar erkannt werden. Batterie gilt nur erreichbaren Meldern. Während einer Erkundung pausiert die Periodik.
+- Erkundung und Periodik laufen über denselben Scheduler wie die Handabfragen: eine offene Fernanfrage, Hostantworten mit Vorrang. Eine neue Abfrage startet erst, wenn der Scheduler leer ist.
+- `node_store` (nur Gerät) nutzt LittleFS von arduino-pico im Dateisystembereich, den ESPHome für den RP2350 reserviert (1 MB). Geschrieben wird `/nodes.tmp` und dann in `/nodes.bin` umbenannt, damit ein Stromausfall die alte Datei erhält. ESPHome-Preferences scheiden aus, sie fassen nur 512 Byte.
+- Schreibzeitpunkt **[R5]**: frühestens 5 s nach der ersten Änderung, nur ohne halben Rahmen, ohne laufenden Sendevorgang und mindestens 1 s nach dem letzten Rahmen. Bei offener Fernanfrage wartet die Brücke bis zu 60 s. Das Log nennt Dauer und belegte Plätze jedes Schreibvorgangs.
+- Neue YAML-Optionen: `auto_discovery` (Vorgabe `false`), `remote_status_interval` (Vorgabe 19 h), `battery_interval` (Vorgabe 24 h), jeweils 10 min bis 20 Tage. Buttons `discover_button`, `rediscover_button`, `registry_log_button` (gibt das Register ins Log aus).
+
 Abnahme:
 
-- Nach einer Erkundung stimmt das Register mit der bekannten Melderliste überein (Anzahl, IDs, Modelle).
-- Nach einem Neustart ist das Register ohne Erkundung wieder vollständig.
-- „Rediscover Network“ baut es neu auf.
+- Erster Start mit der neuen Firmware: „nodes.bin fehlt, Register startet leer“, danach erkundet die Brücke alle 21 SIDs außer der eigenen. Dauer laut Planung 10–20 min. Am Ende stimmt das Register mit der bekannten Melderliste überein (Anzahl, IDs, Modelle), SID 16 ist „nicht erreichbar“, „nodes.bin gespeichert“ erscheint.
+- Nach einem Neustart: „Register aus nodes.bin geladen“ und „Register vollständig, keine Erkundung nötig“. Es läuft keine Fernanfrage.
+- „Rediscover Network“ löscht Register und Datei und baut beides neu auf.
+- Bei den Schreibvorgängen prüfen, ob Rahmen verloren gehen (Rahmenfehler im Log, Lücken in den Folgenummern) **[R5]**.
 
 ### Stufe 3: Melder als Geräte in Home Assistant
 
@@ -297,7 +319,7 @@ Getroffen am 11.10.2026.
 | R2 | Parallele Fernanfragen gehen verloren | Sendeplanung mit genau einer offenen Fernanfrage und 500 ms Ruhe |
 | R3 | Feldbedeutungen sind teils vermutet (`50` d5, `61` SID, `D2` d12, `D4 06` d5, `71` Bit 0x80, `C6`-Ereignisse) | unsichere Felder als „roh“ ausgeben und kennzeichnen, mit Mitschnitten nachschärfen |
 | R4 | Doppelte Geräte-ID der Brücke im Netz | eigene ID aus der YAML per `91` (E3), Abgleich mit `D1` in Stufe 1 |
-| R5 | Flash-Schreibvorgänge für `nodes.bin` halten Kern 1 an, SPI-Bytes können verloren gehen | seltene, gebündelte Schreibvorgänge (E7). In Stufe 2 messen, ob das RM verlorene Bytes wiederholt. Falls nötig: Schreiben nur in Ruhephasen ohne offene Anfrage |
+| R5 | Flash-Schreibvorgänge für `nodes.bin` halten Kern 1 an, SPI-Bytes können verloren gehen | seltene, gebündelte Schreibvorgänge (E7), nur in Ruhephasen ohne laufenden Rahmen und Sendevorgang (umgesetzt in Stufe 2). Bei der Abnahme von Stufe 2 messen, ob das RM verlorene Bytes wiederholt |
 | R6 | Viele Entitäten belasten API und Speicher | Messung in Stufe 3, Diagnoseentitäten optional |
 | R7 | Ein Alarm kann übersehen werden, wenn die Brücke ausfällt oder Rahmen verliert | Brücke bleibt Zusatz. Ereignisse für Alarm und Verbindung zur Brücke in Home Assistant überwachen |
 | R8 | Das eigene RM hängt nach dem Einlernen eines anderen Knotens | Watchdog: bleibt `46` mehrfach aus, Hinweis im Status. Ein automatischer Neustart des RM braucht eine schaltbare Versorgung |
@@ -308,7 +330,7 @@ Getroffen am 11.10.2026.
 
 ## 8. Nächster Schritt
 
-Rest der Hardware-Abnahme von Stufe 1 (Abschnitt 3): Testtaste, Melder zurück auf den Sockel, Handabfragen über `api: actions`. Danach folgt Stufe 2 nach Freigabe.
+Hardware-Abnahme von Stufe 2 (Abschnitt 3): erster Start mit leerem Register und vollständiger Erkundung, Neustart ohne Erkundung, „Rediscover Network“. Aus Stufe 1 bleibt die Testtaste offen; sie lässt sich mit dem Meldertest zusammen abnehmen. Danach folgt Stufe 3 nach Freigabe.
 
 ## 9. Neue Erkenntnisse zum Protokoll
 
@@ -349,6 +371,7 @@ Mitschnitte im eigenen Netz, verglichen mit `D4 03 FF 7F 1F 05 00 00 00 00` (22 
 | 2, erster Test von Stufe 0 | `FF 7F 0E 05 00 00 00 00` | 20 | 16, 20 |
 | 3, 12.10.2026 01:33 | `FF 7F 0E 05 00 00 00 00` | 20 | 16, 20 |
 | 4, 12.10.2026 01:46 | `FD 7F 0E 05 00 00 00 00` | 19 | 1, 16, 20 |
+| 5, 12.10.2026 03:40 | `FF 7F 0E 05 00 00 00 00` | 20 | 16, 20 |
 
 - SID 20 ist das eigene Modul.
 - SID 16 ist ein Knoten ohne Batterie, der zum Netz gehört. Er fehlt in jedem Mitschnitt.
@@ -408,4 +431,22 @@ Bestätigt durch den Nutzer und das Log vom 12.10.2026.
 - SID 15 steht weder in `D4 03` (Mitgliedschaft, P4) noch in `D4 10` (Init-Antworten, P3). Das W2-MM ist also Teilnehmer ohne Eintrag in den SID-Maps der RMs. Das passt zur Protokollanalyse: Ein solcher Teilnehmer kann seine SID an ein neu eingelerntes RM verlieren, dort beobachtet als Doppelvergabe von SID 15.
 - Die geräteadressierten Anfragen des W2-MM (`C7`, `C5`, `72`) tragen vor SID und seq das zusätzliche Byte `7E`, die ID-Anfrage `C3` trägt es nicht. Die Protokollanalyse nennt dieses Byte für „Anfragen mancher Absender“, ihr Beispiel `72 … 00 7E 0F 04` stammt ebenfalls von SID 15. Der Absender mit dem zusätzlichen `7E` ist damit, zumindest in diesem Netz, das W2-MM.
 - Erkundungsablauf des W2-MM gegen die Brücke: `C3`, `C7`, `C5`, `72` in dieser Reihenfolge, laut Log zwischen 02:52 und 02:56 (Zeiten gebündelt, siehe P7).
-- Vorschlag für Stufe 2, zur Entscheidung: Anfragen von SIDs außerhalb von `D4 03` lösen keine Erkundung aus, und das Register legt für sie keinen Melder an. Die Brücke protokolliert sie als Dienstgerät.
+- Umgesetzt in Stufe 2: Anfragen legen keinen Platz im Register an und lösen keine Erkundung aus. Der Dongle erscheint nur im Log.
+
+### P9: Antworten einer ST-630-DE auf Handabfragen
+
+Beobachtung vom 12.10.2026, Log über die native API (Zeitstempel ohne Bündelung), Ziel SID 14, ST-630-DE, Gerät 2FE43D.
+
+| Anfrage | Antwort | Laufzeit |
+| --- | --- | --- |
+| `D3 06 0E 01` | `C4 3D E4 2F 81 7C 04 0E 05` | 3,2 s |
+| `D3 06 0E 00` | `D4 06 0E 64 8C 8C 7D EF 3D E4 2F 00 00` | 21,0 s |
+| `C7 3D E4 2F 7C 04 06` | `C8 3D E4 2F 06 8A 0B 00 00 0E 08` | 6,4 s |
+| `72 3D E4 2F 7C 04 00` | `73 3D E4 2F 7C 04 00 00 0E 09` | 9,5 s |
+
+- `C8` meldet 2954 mV (`8A 0B`), genau den Wert, den die Protokollanalyse für eine andere ST-630-DE (SID 11, Gerät 33F0DC) zeigt. Vermutet: Die ST-630-DE meldet bei intakter Batterie einen festen Wert. Gegenprobe: `C7` an weitere ST-630-DE.
+- `D4 06`: d3 `64` ergibt nach der Formel 2,72 V (BVNL). d4 und d5 sind beide `8C`. Das entspricht `D2`, wo d3 „oft gleich d2“ ist (P6: `4F`/`4F`), denn D4 06 d3–d12 spiegelt D2 d1–d10. Vermutet: D4 06 d5 ist dasselbe Feld wie D2 d3 und folgt meist BVWL. Damit schließt sich der offene Punkt „D4 06 d5“ der Protokollanalyse zum Teil.
+- d6 (RSSI am Ziel) `7D` = 125 liegt über dem in der Protokollanalyse genannten Bereich 68–117 für Melder.
+- Die Laufzeit des Remote-Status lag mit 21 s deutlich über den verifizierten 4–6 s und innerhalb der 8–28 s nach dem Umstecken.
+- Folgenummern von SID 14: `C4` 5, `C8` 8, `73` 9, `71` 10 und 11. Zwischen `C4` und `C8` fehlen 6 und 7, dazwischen lag nur der Remote-Status. Vermutet: Das Ziel-RM verbraucht für den Remote-Status Folgenummern, obwohl `D4 06` selbst keine trägt. Das passt zur Lücke bei Folge 12 in P7. Gegenprobe: zwei Remote-Status-Abfragen hintereinander und danach `C7` an dasselbe Ziel.
+- Sockel-Zeiten: `71 … 01` kam einmal mit einer Kopie in derselben Millisekunde (gleiche SID, gleicher Typ, gleiche Folge). `71 … 05` folgte 53 s später. Die Abstände zum Handgriff hat der Nutzer nicht gemessen.
