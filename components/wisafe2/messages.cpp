@@ -1,11 +1,67 @@
 #include "messages.h"
 
+#include "catalog.h"
+
 #include <cstdio>
 #include <cstring>
 
 namespace esphome {
 namespace wisafe2 {
 namespace {
+
+struct RadioLayout {
+  uint8_t code;
+  RadioType type;
+  // Länge mit Typ, SID und Sequenznummer.
+  uint8_t len;
+};
+
+const RadioLayout RADIO_LAYOUTS[] = {
+    {0x50, RadioType::Alarm, 8},
+    {0x51, RadioType::AlarmStop, 7},
+    {0x61, RadioType::Silence, 8},
+    {0x70, RadioType::Test, 10},
+    {0x71, RadioType::Fault, 9},
+    {0x72, RadioType::FaultDetailsRequest, 9},
+    {0x73, RadioType::FaultDetails, 10},
+    {0xC1, RadioType::DiagnoseRequest, 10},
+    {0xC2, RadioType::DiagnoseResult, 10},
+    {0xC3, RadioType::IdRequest, 6},
+    {0xC4, RadioType::IdInfo, 9},
+    {0xC5, RadioType::FaultEventsRequest, 9},
+    {0xC6, RadioType::FaultEvents, 11},
+    {0xC7, RadioType::BatteryRequest, 9},
+    {0xC8, RadioType::Battery, 11},
+    {0xD5, RadioType::UnknownD5, 9},
+};
+
+void set_device(RadioMessage &out, const uint8_t *id) {
+  out.has_device = true;
+  std::memcpy(out.device_id, id, 3);
+}
+
+void set_model(RadioMessage &out, const uint8_t *bytes) {
+  out.has_model = true;
+  out.model = read_model(bytes);
+}
+
+void set_class(RadioMessage &out, uint8_t device_class) {
+  out.has_class = true;
+  out.device_class = device_class;
+}
+
+int hex_value(char c) {
+  if (c >= '0' && c <= '9') {
+    return c - '0';
+  }
+  if (c >= 'A' && c <= 'F') {
+    return c - 'A' + 10;
+  }
+  if (c >= 'a' && c <= 'f') {
+    return c - 'a' + 10;
+  }
+  return -1;
+}
 
 void read_rm_state(const uint8_t *d, RmState &out) {
   out.bvnl = d[0];
@@ -56,6 +112,14 @@ bool parse_rm_report(const Frame &frame, LocalMessage &out) {
       out.sid = d[2];
       std::memcpy(out.device_id, d + 3, 3);
       return true;
+    case 0x10:
+      if (frame.len < 11) {
+        return false;
+      }
+      out.type = LocalType::InitReport;
+      out.map = read_sid_map(d + 2);
+      out.sid = d[10];
+      return true;
     case 0x11:
       if (frame.len < 12) {
         return false;
@@ -105,6 +169,107 @@ bool parse_local(const Frame &frame, LocalMessage &out) {
   return false;
 }
 
+bool is_host_request(RadioType type) {
+  switch (type) {
+    case RadioType::FaultDetailsRequest:
+    case RadioType::DiagnoseRequest:
+    case RadioType::IdRequest:
+    case RadioType::FaultEventsRequest:
+    case RadioType::BatteryRequest:
+      return true;
+    default:
+      return false;
+  }
+}
+
+bool parse_radio(const Frame &frame, RadioMessage &out) {
+  out = RadioMessage{};
+  if (frame.status != FrameStatus::Complete || frame.len == 0) {
+    return false;
+  }
+  const uint8_t *d = frame.data;
+  const RadioLayout *layout = nullptr;
+  for (const RadioLayout &candidate : RADIO_LAYOUTS) {
+    if (candidate.code == d[0]) {
+      layout = &candidate;
+      break;
+    }
+  }
+  if (layout == nullptr) {
+    return false;
+  }
+  // Anfragen tragen bei manchen Absendern ein zusätzliches Byte vor SID und Sequenznummer.
+  const uint8_t max_len = is_host_request(layout->type) ? layout->len + 1 : layout->len;
+  if (frame.len < layout->len || frame.len > max_len) {
+    return false;
+  }
+  out.type = layout->type;
+  out.code = d[0];
+  out.sid = d[frame.len - 2];
+  out.seq = d[frame.len - 1];
+  switch (out.type) {
+    case RadioType::Alarm:
+    case RadioType::Silence:
+      set_device(out, d + 1);
+      set_class(out, d[4]);
+      out.value = d[5];
+      break;
+    case RadioType::AlarmStop:
+      set_device(out, d + 1);
+      set_class(out, d[4]);
+      break;
+    case RadioType::Test:
+      set_device(out, d + 1);
+      set_class(out, d[4]);
+      out.value = d[5];
+      set_model(out, d + 6);
+      break;
+    case RadioType::Fault:
+    case RadioType::FaultDetailsRequest:
+    case RadioType::FaultEventsRequest:
+    case RadioType::BatteryRequest:
+    case RadioType::UnknownD5:
+      set_device(out, d + 1);
+      set_model(out, d + 4);
+      out.value = d[6];
+      break;
+    case RadioType::FaultDetails:
+      set_device(out, d + 1);
+      set_model(out, d + 4);
+      out.value16 = static_cast<uint16_t>(d[6] | (d[7] << 8));
+      break;
+    case RadioType::DiagnoseRequest:
+      out.value = d[7];
+      break;
+    case RadioType::DiagnoseResult:
+      set_device(out, d + 1);
+      set_class(out, d[4]);
+      set_model(out, d + 5);
+      out.value = d[7];
+      break;
+    case RadioType::IdRequest:
+      break;
+    case RadioType::IdInfo:
+      set_device(out, d + 1);
+      set_class(out, d[4]);
+      set_model(out, d + 5);
+      break;
+    case RadioType::FaultEvents:
+      set_device(out, d + 1);
+      out.value = d[4];
+      std::memcpy(out.events, d + 5, 3);
+      break;
+    case RadioType::Battery:
+      set_device(out, d + 1);
+      out.value = d[4];
+      out.value16 = static_cast<uint16_t>(d[5] | (d[6] << 8));
+      break;
+    case RadioType::None:
+      return false;
+  }
+  return true;
+}
+
 uint32_t rm_battery_mv(uint8_t bvnl) { return 1048576u / (static_cast<uint32_t>(bvnl) + 285u); }
 
 uint64_t read_sid_map(const uint8_t *bytes) {
@@ -126,6 +291,25 @@ int count_sids(uint64_t map) {
 
 void format_device_id(const uint8_t *id, char *out, size_t out_len) {
   std::snprintf(out, out_len, "%02X%02X%02X", id[2], id[1], id[0]);
+}
+
+bool parse_device_id(const char *text, uint8_t *id) {
+  if (text == nullptr || std::strlen(text) != 6) {
+    return false;
+  }
+  uint8_t display[3];
+  for (int index = 0; index < 3; ++index) {
+    const int hi = hex_value(text[2 * index]);
+    const int lo = hex_value(text[2 * index + 1]);
+    if (hi < 0 || lo < 0) {
+      return false;
+    }
+    display[index] = static_cast<uint8_t>((hi << 4) | lo);
+  }
+  id[0] = display[2];
+  id[1] = display[1];
+  id[2] = display[0];
+  return true;
 }
 
 }  // namespace wisafe2

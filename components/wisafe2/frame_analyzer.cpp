@@ -1,5 +1,6 @@
 #include "frame_analyzer.h"
 
+#include "catalog.h"
 #include "messages.h"
 
 #include <cstdio>
@@ -44,54 +45,31 @@ void append_id(char *out, size_t out_len, const uint8_t *id) {
   append_text(out, out_len, tmp);
 }
 
-const char *model_name(uint16_t model) {
-  switch (model) {
-    case 0xED08:
-      return "FP2620W2";
-    case 0x1103:
-      return "WST-630";
-    case 0x1104:
-      return "FP1720W2-R";
-    case 0x7803:
-      return "W2-CO-10X";
-    case 0xC304:
-      return "W2-SVP-630";
-    default:
-      return nullptr;
+void append_device(char *out, size_t out_len, const RadioMessage &msg) {
+  append_text(out, out_len, "Gerät ");
+  append_id(out, out_len, msg.device_id);
+  if (is_gateway_id(msg.device_id)) {
+    append_text(out, out_len, " (Gateway)");
   }
 }
 
-const char *trigger_name(uint8_t trigger) {
-  switch (trigger) {
-    case 0x81:
-      return "Rauch";
-    case 0x82:
-      return "Hitze";
-    case 0x41:
-      return "Kohlenmonoxid";
-    case 0xFF:
-      return "Alle";
-    default:
-      return nullptr;
-  }
+void append_model(char *out, size_t out_len, uint16_t model) {
+  append_format(out, out_len, "Modell %u", model);
+  const char *name = model_name(model);
+  append_text(out, out_len, name != nullptr ? " " : " (unbekannt)");
+  append_text(out, out_len, name);
 }
 
-void append_model(char *out, size_t out_len, uint8_t hi, uint8_t lo) {
-  const uint16_t model = (static_cast<uint16_t>(hi) << 8) | lo;
-  append_format(out, out_len, "%04x", model);
-  if (const char *name = model_name(model)) {
-    append_text(out, out_len, " ");
-    append_text(out, out_len, name);
-  }
-}
-
-void append_trigger(char *out, size_t out_len, uint8_t trigger) {
-  if (const char *name = trigger_name(trigger)) {
+void append_class(char *out, size_t out_len, uint8_t device_class) {
+  if (const char *name = class_name(device_class)) {
     append_text(out, out_len, name);
     return;
   }
-  append_text(out, out_len, "Auslöser ");
-  append_hex_byte(out, out_len, trigger);
+  append_format(out, out_len, "Klasse %02X", device_class);
+}
+
+void append_sender(char *out, size_t out_len, const RadioMessage &msg) {
+  append_format(out, out_len, ", SID %u, Folge %u", msg.sid, msg.seq);
 }
 
 void append_raw_suffix(char *out, size_t out_len, const Frame &frame) {
@@ -124,7 +102,41 @@ void append_rm_state(char *out, size_t out_len, const RmState &rm) {
   append_format(out, out_len, ", kritisch %02X, Funkfehler %u", rm.critical, rm.radio_faults);
 }
 
-bool describe_local(const Frame &frame, char *out, size_t out_len) {
+void append_fault_flags(char *out, size_t out_len, uint8_t flags) {
+  append_format(out, out_len, "Flags %02X: ", flags);
+  append_text(out, out_len, (flags & 0x04) != 0 ? "auf Sockel" : "abgenommen");
+  for (unsigned int bit = 0x01; bit <= 0x80; bit <<= 1) {
+    if (bit == 0x04 || (flags & bit) == 0) {
+      continue;
+    }
+    append_text(out, out_len, ", ");
+    append_text(out, out_len, fault_flag_name(static_cast<uint8_t>(bit)));
+  }
+}
+
+void append_fault_details(char *out, size_t out_len, uint16_t model, uint16_t fs) {
+  append_format(out, out_len, "FS %04X", fs);
+  if (fs == 0) {
+    append_text(out, out_len, " (keine Fehler)");
+    return;
+  }
+  append_text(out, out_len, ":");
+  bool first = true;
+  for (int bit = 0; bit < 16; ++bit) {
+    if ((fs & (1u << bit)) == 0) {
+      continue;
+    }
+    append_text(out, out_len, first ? " " : ", ");
+    first = false;
+    if (const char *name = fault_detail_name(model, bit)) {
+      append_text(out, out_len, name);
+    } else {
+      append_format(out, out_len, "Bit %u", static_cast<unsigned int>(bit));
+    }
+  }
+}
+
+bool describe_local(const Frame &frame, char *out, size_t out_len, bool raw_suffix) {
   LocalMessage msg;
   if (!parse_local(frame, msg)) {
     return false;
@@ -168,6 +180,11 @@ bool describe_local(const Frame &frame, char *out, size_t out_len) {
       append_format(out, out_len, "Präsenz SID %u, Gerät ", msg.sid);
       append_id(out, out_len, msg.device_id);
       break;
+    case LocalType::InitReport:
+      append_text(out, out_len, "Init-Antworten: ");
+      append_sid_list(out, out_len, msg.map);
+      append_format(out, out_len, ", eigene SID %u", msg.sid);
+      break;
     case LocalType::RemoteSidMap:
       append_format(out, out_len, "Remote-SID-Map von SID %u: ", msg.sid);
       append_sid_list(out, out_len, msg.map);
@@ -175,7 +192,151 @@ bool describe_local(const Frame &frame, char *out, size_t out_len) {
     case LocalType::None:
       return false;
   }
-  append_raw_suffix(out, out_len, frame);
+  if (raw_suffix) {
+    append_raw_suffix(out, out_len, frame);
+  }
+  return true;
+}
+
+void describe_request(char *out, size_t out_len, const char *what, const RadioMessage &msg) {
+  append_text(out, out_len, what);
+  append_text(out, out_len, " an ");
+  append_device(out, out_len, msg);
+  append_text(out, out_len, ", ");
+  append_model(out, out_len, msg.model);
+  append_format(out, out_len, ", von SID %u, Folge %u", msg.sid, msg.seq);
+}
+
+bool describe_radio(const Frame &frame, char *out, size_t out_len, bool raw_suffix) {
+  RadioMessage msg;
+  if (!parse_radio(frame, msg)) {
+    return false;
+  }
+  switch (msg.type) {
+    case RadioType::Alarm:
+      append_text(out, out_len, "Alarm ");
+      append_device(out, out_len, msg);
+      append_text(out, out_len, ", ");
+      append_class(out, out_len, msg.device_class);
+      append_format(out, out_len, ", d5 %02X", msg.value);
+      append_sender(out, out_len, msg);
+      break;
+    case RadioType::AlarmStop:
+      append_text(out, out_len, "Alarm Ende ");
+      append_device(out, out_len, msg);
+      append_text(out, out_len, ", ");
+      append_class(out, out_len, msg.device_class);
+      append_sender(out, out_len, msg);
+      break;
+    case RadioType::Silence: {
+      append_text(out, out_len, "Stummschaltung ");
+      append_device(out, out_len, msg);
+      const char *name = silence_class_name(msg.device_class);
+      if (name != nullptr) {
+        append_text(out, out_len, ", ");
+        append_text(out, out_len, name);
+      } else {
+        append_format(out, out_len, ", Klasse %02X", msg.device_class);
+      }
+      append_format(out, out_len, ", d5 %02X", msg.value);
+      append_sender(out, out_len, msg);
+      break;
+    }
+    case RadioType::Test:
+      append_text(out, out_len, "Test ");
+      append_device(out, out_len, msg);
+      append_text(out, out_len, ", ");
+      append_class(out, out_len, msg.device_class);
+      append_text(out, out_len, msg.value == 0x01 ? ", bestanden, " : ", nicht bestanden, ");
+      append_model(out, out_len, msg.model);
+      append_sender(out, out_len, msg);
+      break;
+    case RadioType::Fault:
+      append_text(out, out_len, "Fehlerbericht ");
+      append_device(out, out_len, msg);
+      append_text(out, out_len, ", ");
+      append_model(out, out_len, msg.model);
+      append_text(out, out_len, ", ");
+      append_fault_flags(out, out_len, msg.value);
+      append_sender(out, out_len, msg);
+      break;
+    case RadioType::FaultDetailsRequest:
+      describe_request(out, out_len, "Anfrage Fehlerdetails", msg);
+      break;
+    case RadioType::FaultDetails:
+      append_text(out, out_len, "Fehlerdetails ");
+      append_device(out, out_len, msg);
+      append_text(out, out_len, ", ");
+      append_model(out, out_len, msg.model);
+      append_text(out, out_len, ", ");
+      append_fault_details(out, out_len, msg.model, msg.value16);
+      append_sender(out, out_len, msg);
+      break;
+    case RadioType::DiagnoseRequest:
+      append_format(out, out_len, "Diagnoseanfrage von SID %u, Folge %u", msg.sid, msg.seq);
+      break;
+    case RadioType::DiagnoseResult:
+      append_text(out, out_len, "Diagnoseergebnis ");
+      append_device(out, out_len, msg);
+      append_text(out, out_len, ", ");
+      append_class(out, out_len, msg.device_class);
+      append_text(out, out_len, ", ");
+      append_model(out, out_len, msg.model);
+      if (msg.value == 0x01) {
+        append_text(out, out_len, ", bestanden");
+      } else {
+        append_format(out, out_len, ", Ergebnis %02X", msg.value);
+      }
+      append_sender(out, out_len, msg);
+      break;
+    case RadioType::IdRequest:
+      append_format(out, out_len, "ID-Anfrage von SID %u, Folge %u", msg.sid, msg.seq);
+      break;
+    case RadioType::IdInfo:
+      append_text(out, out_len, "ID-Information ");
+      append_device(out, out_len, msg);
+      append_text(out, out_len, ", ");
+      append_class(out, out_len, msg.device_class);
+      append_text(out, out_len, ", ");
+      append_model(out, out_len, msg.model);
+      append_sender(out, out_len, msg);
+      break;
+    case RadioType::FaultEventsRequest:
+      describe_request(out, out_len, "Anfrage Fehlerereignisse", msg);
+      break;
+    case RadioType::FaultEvents:
+      append_text(out, out_len, "Fehlerereignisse ");
+      append_device(out, out_len, msg);
+      append_text(out, out_len, ", ");
+      append_hex_frame(out, out_len, msg.events, sizeof(msg.events));
+      if (msg.events[0] == 0 && msg.events[1] == 0 && msg.events[2] == 0) {
+        append_text(out, out_len, " (keine)");
+      }
+      append_sender(out, out_len, msg);
+      break;
+    case RadioType::BatteryRequest:
+      describe_request(out, out_len, "Anfrage Batterie", msg);
+      break;
+    case RadioType::Battery:
+      append_text(out, out_len, "Batterie ");
+      append_device(out, out_len, msg);
+      append_format(out, out_len, ", %u mV", msg.value16);
+      append_sender(out, out_len, msg);
+      break;
+    case RadioType::UnknownD5:
+      append_text(out, out_len, "D5 ");
+      append_device(out, out_len, msg);
+      append_text(out, out_len, ", ");
+      append_model(out, out_len, msg.model);
+      append_format(out, out_len, ", d6 %02X", msg.value);
+      append_sender(out, out_len, msg);
+      break;
+    case RadioType::None:
+      return false;
+  }
+  if (raw_suffix) {
+    append_raw_suffix(out, out_len, frame);
+  }
   return true;
 }
 
@@ -195,7 +356,7 @@ const char *status_prefix(FrameStatus status) {
 
 }  // namespace
 
-void describe_frame(const Frame &frame, char *out, size_t out_len) {
+void describe_frame(const Frame &frame, char *out, size_t out_len, bool raw_suffix) {
   if (out_len == 0) {
     return;
   }
@@ -205,53 +366,9 @@ void describe_frame(const Frame &frame, char *out, size_t out_len) {
     append_hex_frame(out, out_len, frame.data, frame.len);
     return;
   }
-  if (describe_local(frame, out, out_len)) {
+  if (describe_local(frame, out, out_len, raw_suffix) || describe_radio(frame, out, out_len, raw_suffix)) {
     return;
   }
-
-  const uint8_t *d = frame.data;
-  const uint8_t type = d[0];
-  if (type == 0x70 && frame.len == 10) {
-    append_text(out, out_len, "Test Gerät ");
-    append_id(out, out_len, d + 1);
-    append_text(out, out_len, ", Modell ");
-    append_model(out, out_len, d[6], d[7]);
-    append_text(out, out_len, ", ");
-    append_trigger(out, out_len, d[4]);
-    append_text(out, out_len, d[5] == 0x01 ? ", bestanden" : ", nicht bestanden");
-    append_format(out, out_len, ", SID %u, Folge %u", d[8], d[9]);
-    append_raw_suffix(out, out_len, frame);
-    return;
-  }
-
-  if (type == 0x71 && frame.len == 9) {
-    append_text(out, out_len, "Sockel Gerät ");
-    append_id(out, out_len, d + 1);
-    append_text(out, out_len, ", Modell ");
-    append_model(out, out_len, d[4], d[5]);
-    append_text(out, out_len, (d[6] & 0x04) != 0 ? ", Sockel an" : ", Sockel aus");
-    append_text(out, out_len, (d[6] & 0x42) != 0 ? ", Batterie niedrig" : ", Batterie ok");
-    append_format(out, out_len, ", SID %u, Folge %u", d[7], d[8]);
-    append_raw_suffix(out, out_len, frame);
-    return;
-  }
-
-  if (type == 0x50 && frame.len >= 5) {
-    append_text(out, out_len, "Alarm Gerät ");
-    append_id(out, out_len, d + 1);
-    append_text(out, out_len, ", ");
-    append_trigger(out, out_len, d[4]);
-    append_raw_suffix(out, out_len, frame);
-    return;
-  }
-
-  if (type == 0x61 && frame.len >= 4) {
-    append_text(out, out_len, "Stille Gerät ");
-    append_id(out, out_len, d + 1);
-    append_raw_suffix(out, out_len, frame);
-    return;
-  }
-
   append_text(out, out_len, "Roh: ");
   append_hex_frame(out, out_len, frame.data, frame.len);
 }
