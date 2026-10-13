@@ -99,6 +99,16 @@ void test_requests_create_no_slot() {
   CHECK_EQ(registry.count(), 0u);
   const uint8_t bridge[] = {0xA5, 0xB8, 0x14};
   CHECK(registry.find_device(bridge) == nullptr);
+
+  // Mitschnitt vom 13.10.2026: 70 vom W2-MM an SID 15 mit der Gateway-ID, SID 15 steht in keiner SID-Map.
+  CHECK_EQ(apply(registry, {0x70, 0x01, 0x02, 0x03, 0x81, 0x01, 0x00, 0x00, 0x0F, 0x02}), 0);
+  CHECK(registry.find(15) == nullptr);
+  // Ein Gateway mit Platz aus der SID-Map nimmt die Nachricht an.
+  apply(registry, {0xD4, 0x03, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00});
+  apply(registry, {0x70, 0x01, 0x02, 0x03, 0x81, 0x01, 0x00, 0x00, 0x03, 0x03});
+  CHECK(registry.find(3) != nullptr);
+  CHECK(registry.find(3)->is_gateway());
+  CHECK(registry.find(3)->has_test);
 }
 
 void test_membership_and_own() {

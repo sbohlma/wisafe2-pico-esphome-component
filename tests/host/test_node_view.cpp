@@ -159,6 +159,8 @@ void test_texts() {
   CHECK(std::strcmp(text, "Stummschaltung: SID 14, Feuer") == 0);
   describe_event(radio({0x70, 0x3D, 0xE4, 0x2F, 0x81, 0x01, 0x7C, 0x04, 0x0E, 0x14}), "Flur", text, sizeof(text));
   CHECK(std::strcmp(text, "Test bestanden: SID 14 (Flur)") == 0);
+  describe_event(radio({0x70, 0x01, 0x02, 0x03, 0x81, 0x01, 0x00, 0x00, 0x0F, 0x02}), nullptr, text, sizeof(text));
+  CHECK(std::strcmp(text, "Test bestanden: SID 15 (Gateway)") == 0);
   describe_event(radio({0x71, 0x3D, 0xE4, 0x2F, 0x7C, 0x04, 0x0B, 0x0E, 0x15}), "Flur", text, sizeof(text));
   CHECK(std::strcmp(text, "Fehlerbericht: SID 14 (Flur), abgenommen, fehlerhaft, Melder-Batterie") == 0);
   describe_event(radio({0xC8, 0x3D, 0xE4, 0x2F, 0x06, 0x8A, 0x0B, 0x00, 0x00, 0x0E, 0x08}), "Flur", text,
