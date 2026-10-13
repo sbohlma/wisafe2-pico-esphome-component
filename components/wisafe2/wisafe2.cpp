@@ -425,7 +425,8 @@ void WiSafe2Component::log_yaml_template() {
     ESP_LOGI(TAG, "YAML-Vorlage: Alle Melder im Register stehen in detectors");
     return;
   }
-  ESP_LOGI(TAG, "YAML-Vorlage für %d Melder ohne Eintrag in detectors, Namen nach Wunsch anpassen:\n"
+  // Kopfzeilen als YAML-Kommentar: Ohne Zeitstempel und Log-Präfix bleibt die Vorlage gültiges YAML.
+  ESP_LOGI(TAG, "# YAML-Vorlage für %d Melder ohne Eintrag in detectors, Namen nach Wunsch anpassen\n"
                 "esphome:\n"
                 "  devices:",
            count);
@@ -442,13 +443,13 @@ void WiSafe2Component::service_template_(uint32_t now) {
   const Node *node = nullptr;
   if (!this->next_template_node_(node)) {
     if (this->template_phase_ == TemplatePhase::Devices) {
-      ESP_LOGI(TAG, "YAML-Vorlage, Fortsetzung:\n"
+      ESP_LOGI(TAG, "# YAML-Vorlage, Fortsetzung\n"
                     "wisafe2:\n"
                     "  detectors:");
       this->template_phase_ = TemplatePhase::Detectors;
       this->template_sid_ = 0;
     } else {
-      ESP_LOGI(TAG, "YAML-Vorlage Ende");
+      ESP_LOGI(TAG, "# YAML-Vorlage Ende");
       this->template_phase_ = TemplatePhase::Idle;
     }
     return;
@@ -459,7 +460,7 @@ void WiSafe2Component::service_template_(uint32_t now) {
   template_name(*node, by_device, name, sizeof(name));
   template_device_key(*node, by_device, key, sizeof(key));
   if (this->template_phase_ == TemplatePhase::Devices) {
-    ESP_LOGI(TAG, "YAML-Vorlage, SID %u:\n"
+    ESP_LOGI(TAG, "    # SID %u\n"
                   "    - id: %s\n"
                   "      name: \"%s\"",
              node->sid, key, name);
@@ -476,7 +477,7 @@ void WiSafe2Component::service_template_(uint32_t now) {
   if (device_class != nullptr && std::strcmp(device_class, "smoke") != 0) {
     std::snprintf(alarm_lines, sizeof(alarm_lines), "\n      alarm:\n        device_class: %s", device_class);
   }
-  ESP_LOGI(TAG, "YAML-Vorlage, SID %u:\n"
+  ESP_LOGI(TAG, "    # SID %u\n"
                 "    - sid: %u%s\n"
                 "      name: \"%s\"\n"
                 "      device: %s%s",
