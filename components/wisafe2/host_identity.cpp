@@ -57,6 +57,19 @@ size_t build_identity_reply(const Identity &identity, uint8_t *out, size_t out_c
   return writer.finish();
 }
 
+size_t build_network_test(const Identity &identity, uint8_t *out, size_t out_cap) {
+  if (!identity.valid) {
+    return 0;
+  }
+  Writer writer(out, out_cap);
+  writer.byte(0x70);
+  writer.bytes(identity.device_id, 3);
+  writer.byte(HOST_CLASS);
+  writer.byte(0x01);
+  writer.model(identity.model);
+  return writer.finish();
+}
+
 size_t build_host_reply(const RadioMessage &request, const Identity &identity, uint8_t *out, size_t out_cap) {
   if (!identity.valid) {
     return 0;

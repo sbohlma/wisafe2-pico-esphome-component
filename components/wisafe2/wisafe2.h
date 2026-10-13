@@ -84,6 +84,11 @@ class WiSafe2Component : public Component, public Transport {
   // Schreibt eine YAML-Vorlage für alle Melder ohne Eintrag in detectors ins Log, verteilt über mehrere
   // Logzeilen.
   void log_yaml_template();
+  // Button „Netztest“ (E1): 70 mit der eigenen Identität, alle Melder im Netz ertönen. Höchstens einmal je
+  // NETWORK_TEST_LOCK_MS.
+  void network_test();
+
+  static constexpr uint32_t NETWORK_TEST_LOCK_MS = 60000;
 
  protected:
   enum class StartState : uint8_t { WaitNetwork, Settle, Running };
@@ -97,6 +102,7 @@ class WiSafe2Component : public Component, public Transport {
     TAG_QUERY_IDENTITY,
     TAG_QUERY_DEVICE,
     TAG_DISCOVERY,
+    TAG_NETWORK_TEST,
   };
 
   void start_module_();
@@ -130,6 +136,7 @@ class WiSafe2Component : public Component, public Transport {
   void assign_detectors_();
   void publish_entities_(uint32_t now);
   void report_event_(const RadioMessage &msg);
+  void report_network_test_(const Completion &completion);
   bool next_template_node_(const Node *&node);
   void service_template_(uint32_t now);
 
@@ -168,6 +175,9 @@ class WiSafe2Component : public Component, public Transport {
   TemplatePhase template_phase_{TemplatePhase::Idle};
   uint8_t template_sid_{0};
   uint32_t template_last_ms_{0};
+  bool network_test_pending_{false};
+  bool network_test_used_{false};
+  uint32_t network_test_ms_{0};
 
   FrameDecoder decoder_;
   Scheduler scheduler_{*this};

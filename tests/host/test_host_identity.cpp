@@ -46,6 +46,20 @@ void test_identity_reply() {
   CHECK_EQ(build_identity_reply(bridge(), out, 9), 0);
 }
 
+void test_network_test() {
+  uint8_t out[HOST_REPLY_MAX];
+  CHECK_EQ(build_network_test(bridge(), out, sizeof(out)), 8);
+  CHECK(std::vector<uint8_t>(out, out + 8) ==
+        (std::vector<uint8_t>{0x70, 0xA5, 0xB8, 0x14, 0xFF, 0x01, 0x11, 0x03}));
+  CHECK_EQ(build_network_test(Identity{}, out, sizeof(out)), 0);
+  CHECK_EQ(build_network_test(bridge(), out, 7), 0);
+  // Mit SID und Sequenznummer des RM passt der Rahmen zum Decoder für die Testtaste eines Melders.
+  RadioMessage msg;
+  CHECK(parse_radio(make_frame({0x70, 0xA5, 0xB8, 0x14, 0xFF, 0x01, 0x11, 0x03, 0x18, 0x01}), msg));
+  CHECK(msg.type == RadioType::Test);
+  CHECK_EQ(msg.value, 0x01);
+}
+
 void test_host_replies() {
   CHECK(reply_to({0xC3, 0x00, 0x00, 0x00, 0x05, 0x02}) ==
         (std::vector<uint8_t>{0xC4, 0xA5, 0xB8, 0x14, 0xFF, 0x11, 0x03}));
@@ -89,6 +103,7 @@ void test_reply_limiter() {
 
 void run_host_identity_tests() {
   test_identity_reply();
+  test_network_test();
   test_host_replies();
   test_reply_limiter();
 }

@@ -22,6 +22,10 @@ struct Identity {
 // 91 dev model FF 05 01 01, Antwort auf 41.
 size_t build_identity_reply(const Identity &identity, uint8_t *out, size_t out_cap);
 
+// 70 dev FF 01 model, Netztest wie die Testtaste eines Melders. Klasse FF lässt alle Melder ertönen. SID und
+// Sequenznummer hängt das RM an; danach fragt es mit 41 die Identität ab.
+size_t build_network_test(const Identity &identity, uint8_t *out, size_t out_cap);
+
 // Antwort auf eine Anfrage an den Host mit festen Werten (keine Fehler, 3000 mV, keine Ereignisse, Diagnose
 // bestanden). 0, wenn keine Antwort fällig ist: 72, C5 und C7 werden an jeden Host geflutet und nur für die
 // eigene Geräte-ID beantwortet. SID und Sequenznummer hängt das RM an.

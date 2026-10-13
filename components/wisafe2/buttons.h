@@ -53,6 +53,11 @@ class WiSafe2TemplateButton : public button::Button, public Parented<WiSafe2Comp
   void press_action() override { this->parent_->log_yaml_template(); }
 };
 
+class WiSafe2NetworkTestButton : public button::Button, public Parented<WiSafe2Component> {
+ protected:
+  void press_action() override { this->parent_->network_test(); }
+};
+
 class WiSafe2RefreshButton : public button::Button, public Parented<WiSafe2Component> {
  public:
   void set_detector(Detector *detector) { this->detector_ = detector; }
