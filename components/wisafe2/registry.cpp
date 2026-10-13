@@ -329,6 +329,10 @@ uint8_t Registry::apply(const RadioMessage &msg, uint32_t now_ms) {
   if (msg.has_model) {
     this->set_model_(*node, msg.model, changes);
   }
+  if ((msg.type == RadioType::Fault || msg.type == RadioType::FaultDetails) && msg.model != 0) {
+    // 71 und 73 mit Modell kommen vom Melder selbst; ein ausgebliebenes C4 ging dann nur verloren (P15).
+    this->set_flag_(*node, NODE_TYPE_UNKNOWN, false, changes);
+  }
   switch (msg.type) {
     case RadioType::Test:
       this->set_class_(*node, msg.device_class, changes);
