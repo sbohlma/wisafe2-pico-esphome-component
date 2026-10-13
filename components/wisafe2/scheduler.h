@@ -19,9 +19,9 @@ static constexpr uint32_t QUIET_MS = 500;
 static constexpr uint32_t ACK_TIMEOUT_MS = 150;
 // D2 und D4 03 kommen nach etwa 70 ms.
 static constexpr uint32_t LOCAL_REPLY_TIMEOUT_MS = 500;
-// Vorgabe für Fernantworten. Im eigenen Netz kamen sie nach 4 s bis über 3 min, D4 01 blieb aus. Einstellbar
-// über set_remote_timeout().
-static constexpr uint32_t REMOTE_REPLY_TIMEOUT_MS = 180000;
+// Vorgabe für Fernantworten. Im eigenen Netz kamen sie nach 3 s bis 176 s; D4 01 meldet ein unerreichbares Ziel
+// nach etwa 45 s. Einstellbar über set_remote_timeout().
+static constexpr uint32_t REMOTE_REPLY_TIMEOUT_MS = 240000;
 // Kern 1 meldet das Ende eines Befehls; bleibt die Meldung aus, gilt der Befehl als nicht gesendet.
 static constexpr uint32_t SEND_TIMEOUT_MS = 1000;
 // Nach dem Init und während laufender Fernanfragen nimmt das Modul bis zu etwa 20 s lang keine Bytes an. Ein

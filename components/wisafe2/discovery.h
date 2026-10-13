@@ -18,8 +18,8 @@ static constexpr uint32_t PERIODIC_RETRY_MS = 60u * 1000u;
 static constexpr uint8_t QUERY_LOCATE = 0x20;
 // Kennung für nodes.bin: Geräte-ID über D4 06, falls unbekannt, dann Klasse und Modell über C4.
 static constexpr uint8_t QUERY_IDENTIFY = QUERY_LOCATE | QUERY_IDENTITY;
-// Netzdetails: Werte, die sich ändern können.
-static constexpr uint8_t QUERY_DETAILS = QUERY_REMOTE_STATUS | QUERY_BATTERY | QUERY_FAULT_DETAILS | QUERY_FAULT_EVENTS;
+// Netzdetails: Werte, die sich ändern können. C5 folgt nur bei Bedarf, siehe on_fault_details().
+static constexpr uint8_t QUERY_DETAILS = QUERY_REMOTE_STATUS | QUERY_BATTERY | QUERY_FAULT_DETAILS;
 
 struct DiscoveryTask {
   uint8_t sid{NO_SID};
@@ -27,13 +27,16 @@ struct DiscoveryTask {
 };
 
 // Plant die Abfragen von Erkundung und Netzdetails. Je SID laufen die Schritte nacheinander: D4 06, C4 bei
-// unbekannter Klasse, dann C8 und 73 bei Meldern, C6 nur bei WST-630 und ST-630-DE. Gesendet wird immer nur eine
-// Abfrage; die Sendeplanung hält ohnehin höchstens eine Fernanfrage offen.
+// unbekannter Klasse, dann C8 (ohne WHT-630) und 73 bei Meldern, C6 nur nach einem 73 mit Fehlern und nur bei
+// WST-630 und ST-630-DE. Gesendet wird immer nur eine Abfrage; die Sendeplanung hält ohnehin höchstens eine
+// Fernanfrage offen.
 class Discovery {
  public:
   enum class Scope : uint8_t {
-    Identify,  // Erkundung: Kennung der SIDs ohne vollständigen Eintrag
-    Details,   // Netzdetails: Remote-Status aller SIDs, Batterie und Fehler der Melder
+    // Erkundung: Kennung der SIDs ohne vollständigen Eintrag, dazu Remote-Status der unerreichbaren SIDs
+    Identify,
+    // Netzdetails: Remote-Status, Batterie und Fehler aller SIDs außer den unerreichbaren
+    Details,
   };
 
   // Startet die Abfragen mit der nächsten lokalen SID-Map (D4 03). Beide Arten lassen sich gemeinsam anfordern.
@@ -47,6 +50,8 @@ class Discovery {
   bool next(const Registry &registry, DiscoveryTask &task);
   // Ergebnis der offenen Abfrage. Ohne D4 06 entfallen die übrigen Schritte dieser SID.
   void on_result(uint8_t sid, uint8_t query, Outcome outcome);
+  // 73 zur offenen Abfrage, vor on_result: Meldet der Melder Fehler, folgt C5 für dieselbe SID.
+  void on_fault_details(uint8_t sid, uint16_t fault_details);
   bool has_work() const;
   bool busy() const { return this->active_; }
   // Genau einmal true, wenn eine mit on_map begonnene Erkundung abgeschlossen ist.

@@ -38,6 +38,9 @@ const char *fault_flag_name(uint8_t bit);
 // Fehlertext für ein Bit des 16-Bit-Werts FS in 0x73, abhängig vom Modell. Unbekannte Modelle gelten als
 // Rauchmelder. nullptr für Bits ohne Bedeutung.
 const char *fault_detail_name(uint16_t model, int bit);
+// Bit in FS für „Melder-Batterie (LOW)“ bzw. „RM-Batterie (LOW)“ als Maske; 0, wenn das Modell es nicht führt.
+uint16_t battery_low_detail_mask(uint16_t model);
+uint16_t rm_battery_low_detail_mask(uint16_t model);
 
 // Gateways benutzen für ihr eigenes RM die Geräte-ID 01 02 03.
 bool is_gateway_id(const uint8_t *id);

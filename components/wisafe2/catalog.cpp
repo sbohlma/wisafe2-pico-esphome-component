@@ -274,6 +274,28 @@ const char *fault_detail_name(uint16_t model, int bit) {
   }
 }
 
+uint16_t battery_low_detail_mask(uint16_t model) {
+  switch (model) {
+    case MODEL_W2_SVP_630:
+    case MODEL_W2_SVP_630_B:
+    case MODEL_W2_LFS_630:
+      return 0;
+    default:
+      return 1u << 2;
+  }
+}
+
+uint16_t rm_battery_low_detail_mask(uint16_t model) {
+  switch (model) {
+    case MODEL_W2_SVP_630:
+    case MODEL_W2_SVP_630_B:
+    case MODEL_W2_LFS_630:
+      return 0;
+    default:
+      return 1u << 7;
+  }
+}
+
 bool is_gateway_id(const uint8_t *id) { return id[0] == 0x01 && id[1] == 0x02 && id[2] == 0x03; }
 
 }  // namespace wisafe2

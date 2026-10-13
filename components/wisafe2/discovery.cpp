@@ -85,12 +85,19 @@ int Discovery::on_map(uint64_t map, const Registry &registry, uint8_t own_sid) {
     if (((map >> sid) & 1u) == 0 || sid == own_sid) {
       continue;
     }
+    const Node *node = registry.find(sid);
+    const bool unreachable = node != nullptr && node->reach == Reach::Unreachable;
     uint8_t queries = 0;
     if (identify && !registry.known(sid)) {
       queries |= QUERY_IDENTIFY;
       identifying = true;
     }
-    if (details) {
+    if (identify && unreachable) {
+      // Die Erkundung prüft unerreichbare SIDs erneut; erst eine Antwort gibt sie für die Netzdetails frei.
+      queries |= QUERY_REMOTE_STATUS;
+      identifying = true;
+    }
+    if (details && (!unreachable || identify)) {
       queries |= QUERY_DETAILS;
     }
     if (queries == 0) {
@@ -145,6 +152,7 @@ bool Discovery::allowed_(const Registry &registry, uint8_t sid, uint8_t query) c
       return node == nullptr || (!node->has_class() && !node->is_gateway() && !node->is_own() &&
                                  (node->flags & NODE_TYPE_UNKNOWN) == 0);
     case QUERY_BATTERY:
+      return node != nullptr && node->has_battery_report() && node->reach != Reach::Unreachable;
     case QUERY_FAULT_DETAILS:
       return node != nullptr && node->is_detector() && node->reach != Reach::Unreachable;
     case QUERY_FAULT_EVENTS:
@@ -212,6 +220,13 @@ void Discovery::on_result(uint8_t sid, uint8_t query, Outcome outcome) {
   this->finish_if_done_();
 }
 
+void Discovery::on_fault_details(uint8_t sid, uint16_t fault_details) {
+  if (this->active_ && this->active_task_.sid == sid && this->active_task_.query == QUERY_FAULT_DETAILS &&
+      fault_details != 0) {
+    this->wanted_[sid] |= QUERY_FAULT_EVENTS;
+  }
+}
+
 void Discovery::finish_if_done_() {
   if (this->campaign_ && !this->active_ && this->campaign_pending_ == 0 && !this->has_work()) {
     this->campaign_ = false;
@@ -260,7 +275,7 @@ uint8_t Discovery::pick_(const Registry &registry, uint8_t own_sid, bool battery
     if (node == nullptr || !node->in_network || sid == own_sid || node->is_own()) {
       continue;
     }
-    if (battery && (!node->is_detector() || node->reach == Reach::Unreachable)) {
+    if (battery && (!node->has_battery_report() || node->reach == Reach::Unreachable)) {
       continue;
     }
     count++;
