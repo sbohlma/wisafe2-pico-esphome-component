@@ -6,12 +6,13 @@ Die zertifizierten Melder bleiben die Sicherheitsanlage. Diese Brücke hört im 
 
 ## Stand
 
-Umgesetzt sind Stufe 0 bis Stufe 3 des [Umsetzungsplans](doc/Protokoll-Umsetzungsplan.md):
+Umgesetzt sind Stufe 0 bis Stufe 3 des [Umsetzungsplans](doc/Protokoll-Umsetzungsplan.md) und aus Stufe 4 der Netztest:
 
 - Stufe 0: Rahmenschicht, Maskierung und Sendeplanung, auf der Hardware abgenommen.
 - Stufe 1: alle bekannten Nachrichten lesbar im Log, Identität der Brücke im Netz, Antworten auf Anfragen an die eigene Geräte-ID, Sensoren des eigenen Funkmoduls und manuelle Abfragen. Auf der Hardware abgenommen bis auf die Testtaste.
 - Stufe 2: Melderregister mit allen Knoten, Netzerkundung und Netzdetails als getrennte Abläufe, Speicherung in `nodes.bin`. Auf der Hardware zum Teil abgenommen.
 - Stufe 3: Melder als Geräte in Home Assistant mit Entitäten je Melder, netzweiten Entitäten, Ereignissen und YAML-Vorlage. Die Abnahme auf der Hardware läuft: Zuordnung, Sockel-Entnahme, Ereignisse und „Status aktualisieren“ arbeiten.
+- Stufe 4, Teil Netztest: Button, der alle Melder im Netz ertönen lässt (siehe [Netztest](#netztest)). Die Abnahme auf der Hardware steht aus.
 
 Beim Start hält Kern 1 nur IRQ auf Low. Die Kommunikation mit dem Modul beginnt erst, wenn ESPHome hochgefahren und das WLAN verbunden ist. 5 s danach, damit sich Log-Clients verbinden können, fordert Kern 0 die Einrichtung des SPI-Slaves an und sendet den Init-Befehl `D3 19 50 00`. Ohne Quittung `46` wiederholt Kern 0 den Befehl bis zu 50-mal im Abstand von etwa 0,5 s. Nach der Quittung meldet das Modul nach etwa 3 s `D4 10` und nimmt bis dahin keine Bytes an. Kern 0 wartet auf diesen Rahmen, höchstens 10 s, und fragt danach den Status des eigenen Funkmoduls (`D1`) und die lokale SID-Map (`D3 03`) ab. Beides sind lokale Abfragen ohne Funkverkehr. Danach erkundet die Brücke alle SIDs ohne Eintrag im Register (siehe [Melderregister und Netzerkundung](#melderregister-und-netzerkundung)). Der Button `init_button` startet den Init jederzeit neu.
 
@@ -104,6 +105,8 @@ wisafe2:
     name: "WiSafe2 Register ins Log"
   template_button:
     name: "WiSafe2 YAML-Vorlage ins Log"
+  network_test_button:
+    name: "WiSafe2 Netztest"
   network_alarm:
     name: "WiSafe2 Alarm im Netz"
   network_silenced:
@@ -341,11 +344,12 @@ Netzweite Einträge, alle optional:
 | `network_alarm` | binary_sensor | Alarm an mindestens einem Knoten |
 | `network_silenced` | binary_sensor | Stummschaltung an mindestens einem Knoten |
 | `last_event` | text_sensor | letztes Ereignis als Text, etwa `Alarm: SID 14 (Flur), Rauch` |
-| `network_event` | event | dieselben Ereignistypen wie `events`, für alle Knoten |
+| `network_event` | event | dieselben Ereignistypen wie `events`, für alle Knoten, dazu `netztest` |
 | `node_count` | sensor | Knoten in der SID-Map |
 | `discovery_running` | binary_sensor | Erkundung oder Netzdetails laufen |
 | `unassigned` | text_sensor | Knoten im Register ohne Eintrag in `detectors`, etwa `SID 4, 7, 12`; eigenes RM, Gateway-RMs, RMs ohne Melder und Knoten ohne bekannte Geräte-ID zählen nicht mit |
 | `template_button` | button | YAML-Vorlage für die Knoten ohne Eintrag ins Log |
+| `network_test_button` | button | Netztest: alle Melder im Netz ertönen (siehe [Netztest](#netztest)) |
 
 Nach jeder Erkundung und auf `template_button` schreibt die Brücke eine Vorlage für dieselben Knoten wie `unassigned` ins Log, zuerst den Block für `esphome: devices`, dann den für `wisafe2: detectors`. Die Geräte heißen `alarm_` mit der Geräte-ID, ihre Namen kommen aus Modell und Geräte-ID und lassen sich danach anpassen; unter `detectors` steht kein `name`, dort gilt der Name des Geräts. Jeder Melder ist eine eigene Logmeldung, ihre Kopfzeile ist ein YAML-Kommentar wie `# SID 14`.
 
@@ -380,6 +384,18 @@ wisafe2:
 Führen zwei SIDs dieselbe Geräte-ID, etwa ein RM, das seinen Melder verloren hat, steht der Platz ohne Modell nur mit `sid` in der Vorlage.
 
 Mit 21 Meldern und allen Entitäten belegt die Firmware rund 16 KB mehr RAM und 27 KB mehr Flash als ohne Melder (103 KB von 512 KB RAM).
+
+### Netztest
+
+Der Eintrag `network_test_button` schaltet den Netztest zu; ohne ihn sendet die Brücke nie einen Test. Er braucht `device_id`.
+
+Auf Knopfdruck sendet die Brücke `70 dev FF 01 model` mit ihrer eigenen Identität, wie die Testtaste eines Melders. Die Klasse `FF` lässt alle Melder im Netz ertönen. Das Funkmodul quittiert mit `46` und fragt danach mit `41` die Identität ab, die Brücke antwortet mit `91`.
+
+- Der Test geht als Funkbefehl über die Sendeplanung. Ist gerade eine Fernanfrage offen, etwa während der Netzdetails, startet er nach deren Antwort, spätestens nach `remote_timeout`.
+- Nach einem quittierten Test ist der Button 60 s gesperrt. Ohne Quittung gilt der Test als nicht ausgelöst, ein neuer Druck ist sofort möglich.
+- Jede Auslösung steht im Log. Nach der Quittung meldet `network_event` den Typ `netztest`, und `last_event` zeigt `Netztest: von der Brücke ausgelöst, alle Melder ertönen`. Abgewiesene und gescheiterte Versuche stehen mit Grund in `last_reply`.
+
+Einen Test für einen einzelnen Melder bietet die Brücke noch nicht. Dafür fehlt der Befehl an das Funkmodul, der einen Test an eine SID richtet. Das Service-Gerät W2-MM kann das mit `>T sid`; sobald ein Mitschnitt den zugehörigen Funkrahmen zeigt, folgt der Einzeltest. Die Diagnose `C1` lässt bisher nur den Hitzemelder WHT-630 piepen.
 
 ## Log
 
@@ -423,7 +439,7 @@ Hinweise zum Log-Client von ESPHome (`esphome logs`, Dashboard):
 
 ## Tests
 
-Rahmenschicht, Nachrichten, Modelltabellen, Duplikatfilter, Antworten des Hosts, Sendeplanung, Melderregister mit `nodes.bin`-Format, Erkundung, Netzdetails, Zustände und Texte der Melder-Entitäten, YAML-Vorlage und Log-Text lassen sich ohne Hardware auf dem PC prüfen:
+Rahmenschicht, Nachrichten, Modelltabellen, Duplikatfilter, Antworten des Hosts, Rahmen des Netztests, Sendeplanung, Melderregister mit `nodes.bin`-Format, Erkundung, Netzdetails, Zustände und Texte der Melder-Entitäten, YAML-Vorlage und Log-Text lassen sich ohne Hardware auf dem PC prüfen:
 
 ```sh
 make -C tests/host
