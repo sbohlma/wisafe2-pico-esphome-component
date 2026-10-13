@@ -11,7 +11,7 @@ Umgesetzt sind Stufe 0 bis Stufe 3 des [Umsetzungsplans](doc/Protokoll-Umsetzung
 - Stufe 0: Rahmenschicht, Maskierung und Sendeplanung, auf der Hardware abgenommen.
 - Stufe 1: alle bekannten Nachrichten lesbar im Log, Identität der Brücke im Netz, Antworten auf Anfragen an die eigene Geräte-ID, Sensoren des eigenen Funkmoduls und manuelle Abfragen. Auf der Hardware abgenommen bis auf die Testtaste.
 - Stufe 2: Melderregister mit allen Knoten, Netzerkundung und Netzdetails als getrennte Abläufe, Speicherung in `nodes.bin`. Auf der Hardware zum Teil abgenommen.
-- Stufe 3: Melder als Geräte in Home Assistant mit Entitäten je Melder, netzweiten Entitäten, Ereignissen und YAML-Vorlage. Die Abnahme auf der Hardware folgt.
+- Stufe 3: Melder als Geräte in Home Assistant mit Entitäten je Melder, netzweiten Entitäten, Ereignissen und YAML-Vorlage. Die Abnahme auf der Hardware läuft: Zuordnung, Sockel-Entnahme, Ereignisse und „Status aktualisieren“ arbeiten.
 
 Beim Start hält Kern 1 nur IRQ auf Low. Die Kommunikation mit dem Modul beginnt erst, wenn ESPHome hochgefahren und das WLAN verbunden ist. 5 s danach, damit sich Log-Clients verbinden können, fordert Kern 0 die Einrichtung des SPI-Slaves an und sendet den Init-Befehl `D3 19 50 00`. Ohne Quittung `46` wiederholt Kern 0 den Befehl bis zu 50-mal im Abstand von etwa 0,5 s. Nach der Quittung meldet das Modul nach etwa 3 s `D4 10` und nimmt bis dahin keine Bytes an. Kern 0 wartet auf diesen Rahmen, höchstens 10 s, und fragt danach den Status des eigenen Funkmoduls (`D1`) und die lokale SID-Map (`D3 03`) ab. Beides sind lokale Abfragen ohne Funkverkehr. Danach erkundet die Brücke alle SIDs ohne Eintrag im Register (siehe [Melderregister und Netzerkundung](#melderregister-und-netzerkundung)). Der Button `init_button` startet den Init jederzeit neu.
 
@@ -243,7 +243,7 @@ Verbindet sich der Log-Client erst später, `WiSafe2 Init senden` drücken. Ein 
 
 ### Melderregister und Netzerkundung
 
-Das Register führt bis zu 50 Knoten mit SID, Geräte-ID, Modell und Klasse, dazu im RAM Erreichbarkeit, RM-Batterie und RSSI aus `D4 06`, Melder-Batterie, Fehlerflags, Fehlerdetails, Fehlerereignisse, letzten Test, Alarm und Stummschaltung. Gehörte Nachrichten (`70`, `71`, `50`, `51`, `61`, `D2`, `D4 01`, `D4 03`, `D4 04`, `D4 09` und die Kopien von `C4`, `73`, `C6`, `C8`) aktualisieren es sofort. Anfragen anderer Knoten, etwa vom W2-MM-Dienstgerät, legen keinen Eintrag an.
+Das Register führt bis zu 50 Knoten mit SID, Geräte-ID, Modell und Klasse, dazu im RAM Erreichbarkeit, RM-Batterie und RSSI aus `D4 06`, Melder-Batterie, Fehlerflags, Fehlerdetails, Fehlerereignisse, letzten Test, Alarm und Stummschaltung. Gehörte Nachrichten (`70`, `71`, `50`, `51`, `61`, `D2`, `D4 01`, `D4 03`, `D4 04`, `D4 09` und die Kopien von `C4`, `73`, `C6`, `C8`) aktualisieren es sofort. Anfragen anderer Knoten, etwa vom W2-MM-Dienstgerät, legen keinen Eintrag an. Dasselbe gilt für Nachrichten mit der Gateway-ID `030201` von einer SID ohne Eintrag, etwa den Test des W2-MM an SID 15; im Log und in `last_event` erscheinen sie mit `(Gateway)`. Ein Eintrag, den eine ältere Firmware so angelegt hat, bleibt bis „Rediscover Network“ bestehen. Er zählt weder als Knoten im Netz noch als nicht zugeordneter Melder.
 
 Abgefragt wird in zwei getrennten Abläufen. Beide beginnen mit `D3 03` und fragen die SIDs nacheinander ab:
 
@@ -254,7 +254,7 @@ Abgefragt wird in zwei getrennten Abläufen. Beide beginnen mit `D3 03` und frag
 
 Bleibt der Remote-Status ohne Antwort, entfallen die weiteren Schritte dieser SID. Nicht erreichbare SIDs überspringen die Netzdetails; die Erkundung fragt sie bei jedem Lauf erneut, und erst mit einer Antwort sind sie wieder dabei. RMs ohne Melder beantworten die ID-Information nicht und gelten danach als „RM ohne Melder“. Der WHT-630 liefert in `C8` keine Batteriespannung und wird deshalb nicht danach gefragt.
 
-Es läuft immer nur eine Fernanfrage, und die Brücke wartet auf deren Antwort bis zum Zeitlimit `remote_timeout` (Vorgabe 240 s, einstellbar von 30 s bis 10 min). Im eigenen Netz kamen Antworten mit genau einer offenen Anfrage nach 3 s bis 176 s. Ist das Ziel nicht erreichbar, meldet das Modul nach etwa 45 s `D4 01` und beendet das Warten. Eine Antwort nach dem Zeitlimit trägt die Brücke trotzdem ins Register ein. Das Log zählt mit, etwa `Erkundung SID 3 (2/21): ID-Information` oder `Netzdetails SID 3 (2/21): Batterie`, und gibt am Ende Dauer und Register aus.
+Es läuft immer nur eine Fernanfrage, und die Brücke wartet auf deren Antwort bis zum Zeitlimit `remote_timeout` (Vorgabe 240 s, einstellbar von 30 s bis 10 min). Im eigenen Netz kamen Antworten mit genau einer offenen Anfrage nach 3 s bis 176 s. Ist das Ziel nicht erreichbar, meldet das Modul nach 44 bis 121 s `D4 01` und beendet das Warten. Eine Antwort nach dem Zeitlimit trägt die Brücke trotzdem ins Register ein. Das Log zählt mit, etwa `Erkundung SID 3 (2/21): ID-Information` oder `Netzdetails SID 3 (2/21): Batterie`, und gibt am Ende Dauer und Register aus.
 
 Die Erkundung braucht je Melder meist unter einer Minute. Die Netzdetails brauchen je Melder 1,5 bis 4 min, für 21 SIDs also rund eine Stunde, weil der erste Kontakt bis knapp 3 min dauern kann.
 
@@ -348,27 +348,36 @@ Netzweite Einträge, alle optional:
 | `unassigned` | text_sensor | Knoten im Register ohne Eintrag in `detectors`, etwa `SID 4, 7, 12`; eigenes RM, Gateway-RMs und RMs ohne Melder zählen nicht mit |
 | `template_button` | button | YAML-Vorlage für die Knoten ohne Eintrag ins Log |
 
-Nach jeder Erkundung und auf `template_button` schreibt die Brücke eine Vorlage für alle Knoten ohne Eintrag ins Log, zuerst den Block für `esphome: devices`, dann den für `wisafe2: detectors`. Die Namen kommen aus Modell und Geräte-ID und lassen sich danach anpassen. Jeder Abschnitt ist eine eigene Logmeldung mit einer Kopfzeile wie `YAML-Vorlage, SID 14:`; die eingerückten Zeilen darunter lassen sich direkt übernehmen. Ohne Kopfzeilen sieht die Vorlage so aus:
+Nach jeder Erkundung und auf `template_button` schreibt die Brücke eine Vorlage für alle Knoten ohne Eintrag ins Log, zuerst den Block für `esphome: devices`, dann den für `wisafe2: detectors`. Die Namen kommen aus Modell und Geräte-ID und lassen sich danach anpassen. Jeder Melder ist eine eigene Logmeldung, ihre Kopfzeile ist ein YAML-Kommentar wie `# SID 14`.
+
+Der Log-Client setzt vor jede Zeile einen Zeitstempel und vor eingerückte Zeilen zusätzlich das Präfix der Meldung, etwa `[08:19:46.895][I][wisafe2:462]: `. Ohne diesen Vorspann ist die Vorlage gültiges YAML. Im Editor entfernt ihn „Suchen und Ersetzen“ mit dem regulären Ausdruck `^\[[0-9:.]+\](\[I\]\[wisafe2:[0-9]+\]: )?` und leerem Ersatztext. Zeilen anderer Komponenten, die dazwischen stehen, etwa `[S][sensor]: …`, gehören nicht zur Vorlage. Die Einträge unter `devices` und `detectors` kommen in die vorhandenen Blöcke `esphome:` und `wisafe2:`. Bereinigt sieht die Vorlage so aus:
 
 ```yaml
+# YAML-Vorlage für 2 Melder ohne Eintrag in detectors, Namen nach Wunsch anpassen
 esphome:
   devices:
+    # SID 3
     - id: melder_132f08
       name: "WHT-630 132F08"
+    # SID 14
     - id: melder_2fe43d
       name: "ST-630-DE 2FE43D"
+# YAML-Vorlage, Fortsetzung
 wisafe2:
   detectors:
+    # SID 3
     - sid: 3
       device_id: "132F08"
       name: "WHT-630 132F08"
       device: melder_132f08
       alarm:
         device_class: heat
+    # SID 14
     - sid: 14
       device_id: "2FE43D"
       name: "ST-630-DE 2FE43D"
       device: melder_2fe43d
+# YAML-Vorlage Ende
 ```
 
 Führen zwei SIDs dieselbe Geräte-ID, etwa ein RM, das seinen Melder verloren hat, steht der Platz ohne Modell nur mit `sid` in der Vorlage.
@@ -409,6 +418,11 @@ Kommt dieselbe Funknachricht (SID, Typ, Sequenznummer) innerhalb von 60 s erneut
 Alles andere erscheint als `Roh:` mit Hex-Bytes. Fehlerhafte Rahmen erscheinen als `Roh unvollständig:`, `Roh zu lang:` oder `Roh ungültige Maskierung:`. Gesendete Bytes stehen auf Stufe DEBUG als `Sende …` im Log, maskiert und mit `7E`. Nimmt das Modul kein Byte an, steht dort `Kern 1: Modul nimmt kein Byte an (…)` mit dem Grund: `CS belegt` (das Modul sendet gerade selbst) oder `Modul taktet nicht`.
 
 Fehler auf Kern 1, etwa eine volle Warteschlange oder ein SPI-Überlauf, kommen über `core1_log` ins selbe Log.
+
+Hinweise zum Log-Client von ESPHome (`esphome logs`, Dashboard):
+
+- Zeilen mit `[S]` erzeugt der Log-Client selbst aus den Zustandsmeldungen der API. Den ersten Zustand jeder Entität nach dem Verbinden zeigt er nicht, weil er ihn für den Anfangsstand hält. Bei Event-Entitäten fehlt deshalb das erste Ereignis nach dem Verbinden als `[S][event]`-Zeile; Home Assistant erhält es trotzdem. Die Zeile `Ereignis: …` der Brücke erscheint jedes Mal.
+- Das Schreiben von `nodes.bin` dauert etwa 50 bis 140 ms, weil der Flash einen Sektor löschen muss. ESPHome meldet ab 50 ms `wisafe2 took a long time for an operation` und hebt die Schwelle danach selbst an. Die Warnung ist erwartet.
 
 ## Tests
 
