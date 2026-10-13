@@ -6,11 +6,12 @@ Die zertifizierten Melder bleiben die Sicherheitsanlage. Diese Brücke hört im 
 
 ## Stand
 
-Umgesetzt sind Stufe 0 bis Stufe 2 des [Umsetzungsplans](doc/Protokoll-Umsetzungsplan.md):
+Umgesetzt sind Stufe 0 bis Stufe 3 des [Umsetzungsplans](doc/Protokoll-Umsetzungsplan.md):
 
 - Stufe 0: Rahmenschicht, Maskierung und Sendeplanung, auf der Hardware abgenommen.
 - Stufe 1: alle bekannten Nachrichten lesbar im Log, Identität der Brücke im Netz, Antworten auf Anfragen an die eigene Geräte-ID, Sensoren des eigenen Funkmoduls und manuelle Abfragen. Auf der Hardware abgenommen bis auf die Testtaste.
 - Stufe 2: Melderregister mit allen Knoten, Netzerkundung und Netzdetails als getrennte Abläufe, Speicherung in `nodes.bin`. Auf der Hardware zum Teil abgenommen.
+- Stufe 3: Melder als Geräte in Home Assistant mit Entitäten je Melder, netzweiten Entitäten, Ereignissen und YAML-Vorlage. Die Abnahme auf der Hardware folgt.
 
 Beim Start hält Kern 1 nur IRQ auf Low. Die Kommunikation mit dem Modul beginnt erst, wenn ESPHome hochgefahren und das WLAN verbunden ist. 5 s danach, damit sich Log-Clients verbinden können, fordert Kern 0 die Einrichtung des SPI-Slaves an und sendet den Init-Befehl `D3 19 50 00`. Ohne Quittung `46` wiederholt Kern 0 den Befehl bis zu 50-mal im Abstand von etwa 0,5 s. Nach der Quittung meldet das Modul nach etwa 3 s `D4 10` und nimmt bis dahin keine Bytes an. Kern 0 wartet auf diesen Rahmen, höchstens 10 s, und fragt danach den Status des eigenen Funkmoduls (`D1`) und die lokale SID-Map (`D3 03`) ab. Beides sind lokale Abfragen ohne Funkverkehr. Danach erkundet die Brücke alle SIDs ohne Eintrag im Register (siehe [Melderregister und Netzerkundung](#melderregister-und-netzerkundung)). Der Button `init_button` startet den Init jederzeit neu.
 
@@ -30,7 +31,7 @@ Die Sendeplanung auf Kern 0 schickt höchstens einen Befehl gleichzeitig und hä
 | --- | --- | --- |
 | lokale Abfrage, etwa `D1`, `D3 03` | `D2` bzw. `D4 03` | 500 ms |
 | Funkbefehl, etwa der Init | `46` (angenommen) oder `47` (abgelehnt) | 150 ms |
-| Fernanfrage | `46`, danach die Antwort aus dem Netz | `remote_timeout`, Vorgabe 180 s |
+| Fernanfrage | `46`, danach die Antwort aus dem Netz | `remote_timeout`, Vorgabe 240 s |
 
 Antworten auf Fernanfragen ordnet die Sendeplanung genau zu: `D4 06` über die SID, `C4` über die SID am Ende des Rahmens, `C8`, `73` und `C6` über die Geräte-ID. Nach dem Init bekommt die Brücke Kopien aller Hostantworten im Netz, auch auf Anfragen anderer Knoten; diese Kopien beenden keine eigene Anfrage. Meldet das Modul `D4 01` mit der Ziel-SID, endet die Anfrage als „nicht erreichbar“.
 
@@ -92,7 +93,7 @@ wisafe2:
   sid_map_button:
     name: "WiSafe2 SID-Map lesen"
   auto_discovery: false
-  remote_timeout: 180s
+  remote_timeout: 240s
   discover_button:
     name: "WiSafe2 Netz erkunden"
   rediscover_button:
@@ -101,9 +102,29 @@ wisafe2:
     name: "WiSafe2 Netzdetails abfragen"
   registry_log_button:
     name: "WiSafe2 Register ins Log"
+  template_button:
+    name: "WiSafe2 YAML-Vorlage ins Log"
+  network_alarm:
+    name: "WiSafe2 Alarm im Netz"
+  network_silenced:
+    name: "WiSafe2 Stummschaltung"
+  last_event:
+    name: "WiSafe2 letztes Ereignis"
+  network_event:
+    name: "WiSafe2 Ereignis"
+  node_count:
+    name: "WiSafe2 Anzahl Knoten"
+  discovery_running:
+    name: "WiSafe2 Erkundung läuft"
+  unassigned:
+    name: "WiSafe2 nicht zugeordnete Melder"
+  detectors:
+    - sid: 14
+      device_id: "2FE43D"
+      name: "Flur"
 ```
 
-Der Ordner `components/wisafe2` wird darüber geladen. Alle Einträge sind optional.
+Der Ordner `components/wisafe2` wird darüber geladen. Alle Einträge sind optional. Wie die Melder in `detectors` und `esphome: devices` eingetragen werden, steht unter [Melder in Home Assistant](#melder-in-home-assistant).
 
 ### Identität
 
@@ -228,14 +249,14 @@ Abgefragt wird in zwei getrennten Abläufen. Beide beginnen mit `D3 03` und frag
 
 | Ablauf | Zweck | Abfragen je SID |
 | --- | --- | --- |
-| Erkundung | Kennung für `nodes.bin`: Geräte-ID, Klasse, Modell. Ändert sich nur, wenn ein Melder getauscht wird | `D3 06 sid 00` (Remote-Status), nur solange die Geräte-ID fehlt; danach `D3 06 sid 01` (ID-Information), solange die Klasse fehlt |
-| Netzdetails | Werte, die sich ändern | `D3 06 sid 00` an jede SID, dann `C7` und `72` an jeden erreichbaren Melder, `C5` nur an WST-630 und ST-630-DE |
+| Erkundung | Kennung für `nodes.bin`: Geräte-ID, Klasse, Modell. Ändert sich nur, wenn ein Melder getauscht wird | `D3 06 sid 00` (Remote-Status), solange die Geräte-ID fehlt und bei jeder nicht erreichbaren SID; danach `D3 06 sid 01` (ID-Information), solange die Klasse fehlt |
+| Netzdetails | Werte, die sich ändern | `D3 06 sid 00` an jede erreichbare SID, dann `C7` (Batterie, ohne WHT-630) und `72` (Fehlerdetails) an jeden Melder. `C5` (Fehlerereignisse) nur, wenn `73` Fehler meldet, und nur an WST-630 und ST-630-DE |
 
-Bleibt der Remote-Status ohne Antwort, entfallen die weiteren Schritte dieser SID. RMs ohne Melder beantworten die ID-Information nicht und gelten danach als „RM ohne Melder“.
+Bleibt der Remote-Status ohne Antwort, entfallen die weiteren Schritte dieser SID. Nicht erreichbare SIDs überspringen die Netzdetails; die Erkundung fragt sie bei jedem Lauf erneut, und erst mit einer Antwort sind sie wieder dabei. RMs ohne Melder beantworten die ID-Information nicht und gelten danach als „RM ohne Melder“. Der WHT-630 liefert in `C8` keine Batteriespannung und wird deshalb nicht danach gefragt.
 
-Es läuft immer nur eine Fernanfrage, und die Brücke wartet auf deren Antwort bis zum Zeitlimit `remote_timeout` (Vorgabe 180 s, einstellbar von 30 s bis 10 min). Im eigenen Netz kamen Antworten nach 4 s bis über 3 min; mit 55 s liefen viele Anfragen ins Leere, und die Antworten stauten sich mit den folgenden Anfragen. Eine Antwort nach dem Zeitlimit trägt die Brücke trotzdem ins Register ein. Das Log zählt mit, etwa `Erkundung SID 3 (2/21): ID-Information` oder `Netzdetails SID 3 (2/21): Batterie`, und gibt am Ende Dauer und Register aus.
+Es läuft immer nur eine Fernanfrage, und die Brücke wartet auf deren Antwort bis zum Zeitlimit `remote_timeout` (Vorgabe 240 s, einstellbar von 30 s bis 10 min). Im eigenen Netz kamen Antworten mit genau einer offenen Anfrage nach 3 s bis 176 s. Ist das Ziel nicht erreichbar, meldet das Modul nach etwa 45 s `D4 01` und beendet das Warten. Eine Antwort nach dem Zeitlimit trägt die Brücke trotzdem ins Register ein. Das Log zählt mit, etwa `Erkundung SID 3 (2/21): ID-Information` oder `Netzdetails SID 3 (2/21): Batterie`, und gibt am Ende Dauer und Register aus.
 
-Die Erkundung braucht je Melder meist unter einer Minute. Jede SID ohne Antwort kostet das volle Zeitlimit, mit der Vorgabe also 3 min. Die Netzdetails brauchen deutlich länger, weil Fehlerdetails und Fehlerereignisse oft erst nach 30–100 s kommen.
+Die Erkundung braucht je Melder meist unter einer Minute. Die Netzdetails brauchen je Melder 1,5 bis 4 min, für 21 SIDs also rund eine Stunde, weil der erste Kontakt bis knapp 3 min dauern kann.
 
 | | `auto_discovery: false` (Vorgabe) | `auto_discovery: true` |
 | --- | --- | --- |
@@ -244,9 +265,9 @@ Die Erkundung braucht je Melder meist unter einer Minute. Jede SID ohne Antwort 
 | `rediscover_button` | löscht Register und `nodes.bin`, dann Erkundung aller SIDs | wie links |
 | `details_button` | Netzdetails aller SIDs | wie links |
 | periodisch | keine Abfragen | Remote-Status reihum je SID alle `remote_status_interval` (Vorgabe `19h`), Batterie je Melder alle `battery_interval` (Vorgabe `24h`), gleichmäßig verteilt, erste Runde 15 min nach dem Start |
-| nach Ereignissen | keine Abfragen | `72` und `C5` nach `71` mit Flag „fehlerhaft“; Erkundung neuer SIDs aus `D4 04` und `D4 09` |
+| nach Ereignissen | keine Abfragen | `72` nach `71` mit Flag „fehlerhaft“, `C5` folgt, wenn `73` Fehler meldet; Erkundung neuer SIDs aus `D4 04` und `D4 09` |
 
-Die Intervalle sind von 10 min bis 20 Tage einstellbar. Ein Knoten gilt als nicht erreichbar nach `D4 01` oder zwei ausbleibenden Antworten in Folge; entfernt wird er nur über `rediscover_button`. `D4 01` kam im eigenen Netz bisher nie, es zählen also die ausbleibenden Antworten.
+Die Intervalle sind von 10 min bis 20 Tage einstellbar. Ein Knoten gilt als nicht erreichbar nach `D4 01` oder zwei ausbleibenden Antworten in Folge; entfernt wird er nur über `rediscover_button`.
 
 `registry_log_button` schreibt das Register ins Log, eine Zeile je Knoten, etwa:
 
@@ -255,6 +276,104 @@ SID 14: 2FE43D ST-630-DE, Rauch, im Netz, erreichbar, Batterie 2954 mV, RM 2723 
 ```
 
 Geräte-ID, Modell, Klasse und Flags speichert die Brücke in `/nodes.bin` (408 Byte) im LittleFS des Pico, im Dateisystembereich, den ESPHome für den RP2350 reserviert. Geschrieben wird gebündelt einige Sekunden nach einer Änderung und nur in Ruhephasen, weil Kern 1 während des Schreibens pausiert. Ist die Datei beschädigt oder von einer anderen Version, startet das Register leer und die Brücke erkundet alle SIDs.
+
+### Melder in Home Assistant
+
+Jeder Melder in `detectors` erscheint mit eigenen Entitäten über die native API. Zugeordnet wird er über `device_id` (Geräte-ID in Anzeigereihenfolge) oder `sid`; mindestens eins von beiden ist nötig. Mit beiden gilt die Geräte-ID, und die SID dient nur, solange dort keine andere Geräte-ID steht. So bleibt die Zuordnung auch richtig, wenn ein Melder nach einem neuen Pairing eine andere SID bekommt.
+
+Mit `device` landen die Entitäten eines Melders auf einem eigenen Gerät in Home Assistant. Das Gerät wird unter `esphome: devices` angelegt:
+
+```yaml
+esphome:
+  name: wisafe2-bridge
+  devices:
+    - id: melder_flur
+      name: "Rauchmelder Flur"
+    - id: melder_kueche
+      name: "Hitzemelder Küche"
+
+time:
+  - platform: homeassistant
+
+wisafe2:
+  detectors:
+    - sid: 14
+      device_id: "2FE43D"
+      name: "Flur"
+      device: melder_flur
+    - device_id: "132F08"
+      name: "Küche"
+      device: melder_kueche
+      alarm:
+        device_class: heat
+      battery_voltage: false
+    - sid: 7
+      name: "Keller"
+```
+
+Ohne `device` stehen die Entitäten auf dem Gerät der Brücke, mit dem Namen des Melders davor, etwa „Keller Alarm“. `name` erscheint außerdem im Log und in `last_event`. `zuletzt gesehen` und die Uhrzeit des letzten Tests brauchen eine gestellte Uhr, etwa über `time: platform: homeassistant`.
+
+Ohne weitere Angabe entstehen alle Entitäten. Jede lässt sich mit `false` abwählen oder mit den üblichen Einstellungen anpassen, etwa `name`, `icon`, `device_class`, `disabled_by_default` oder `internal`:
+
+| Eintrag | Art | Inhalt |
+| --- | --- | --- |
+| `alarm` | binary_sensor, `smoke` | Alarm; unbekannt nach dem Start, wechselt nur durch `50` und `51`. `61` (Stummschaltung) beendet ihn nicht |
+| `fault` | binary_sensor, `problem` | `71` mit Flag „fehlerhaft“ oder `73` mit Fehlerbits |
+| `socket_problem` | binary_sensor, `problem` | `71` ohne Flag „auf Sockel“: Melder abgenommen |
+| `battery_low` | binary_sensor, `battery` | Melder-Batterie schwach aus `71` oder `73` |
+| `rm_battery_low` | binary_sensor, `battery` | Batterie des Funkmoduls schwach aus `71` oder `73` |
+| `online` | binary_sensor, `connectivity` | in der SID-Map und erreichbar |
+| `battery_voltage` | sensor, mV | Melder-Batterie aus `C8`; der WHT-630 liefert keinen Wert |
+| `rm_battery_voltage` | sensor, V | Batterie des Funkmoduls aus `D4 06` |
+| `rssi` | sensor | Empfangspegel aus `D4 06` |
+| `last_seen` | text_sensor, `timestamp` | letzte Nachricht des Melders, auf eine Minute genau |
+| `model` | text_sensor | Modell und Geräte-ID, etwa `ST-630-DE, 2FE43D` |
+| `fault_details` | text_sensor | Fehlerbits aus `73` im Klartext oder `keine Fehler` |
+| `last_test` | text_sensor | `bestanden` oder `fehlgeschlagen`, mit Uhrzeit, etwa `bestanden am 13.10. 14:03` |
+| `refresh_button` | button | Status aktualisieren: Remote-Status, Batterie und Fehlerdetails dieses Melders |
+| `events` | event | Ereignistypen `alarm`, `alarm_ende`, `stummschaltung`, `test`, `fehlerbericht` |
+
+Werte, die noch nicht gemeldet wurden, bleiben unbekannt. Abfragen setzen den Alarm nie zurück.
+
+Netzweite Einträge, alle optional:
+
+| Eintrag | Art | Inhalt |
+| --- | --- | --- |
+| `network_alarm` | binary_sensor | Alarm an mindestens einem Knoten |
+| `network_silenced` | binary_sensor | Stummschaltung an mindestens einem Knoten |
+| `last_event` | text_sensor | letztes Ereignis als Text, etwa `Alarm: SID 14 (Flur), Rauch` |
+| `network_event` | event | dieselben Ereignistypen wie `events`, für alle Knoten |
+| `node_count` | sensor | Knoten in der SID-Map |
+| `discovery_running` | binary_sensor | Erkundung oder Netzdetails laufen |
+| `unassigned` | text_sensor | Knoten im Register ohne Eintrag in `detectors`, etwa `SID 4, 7, 12`; eigenes RM, Gateway-RMs und RMs ohne Melder zählen nicht mit |
+| `template_button` | button | YAML-Vorlage für die Knoten ohne Eintrag ins Log |
+
+Nach jeder Erkundung und auf `template_button` schreibt die Brücke eine Vorlage für alle Knoten ohne Eintrag ins Log, zuerst den Block für `esphome: devices`, dann den für `wisafe2: detectors`. Die Namen kommen aus Modell und Geräte-ID und lassen sich danach anpassen. Jeder Abschnitt ist eine eigene Logmeldung mit einer Kopfzeile wie `YAML-Vorlage, SID 14:`; die eingerückten Zeilen darunter lassen sich direkt übernehmen. Ohne Kopfzeilen sieht die Vorlage so aus:
+
+```yaml
+esphome:
+  devices:
+    - id: melder_132f08
+      name: "WHT-630 132F08"
+    - id: melder_2fe43d
+      name: "ST-630-DE 2FE43D"
+wisafe2:
+  detectors:
+    - sid: 3
+      device_id: "132F08"
+      name: "WHT-630 132F08"
+      device: melder_132f08
+      alarm:
+        device_class: heat
+    - sid: 14
+      device_id: "2FE43D"
+      name: "ST-630-DE 2FE43D"
+      device: melder_2fe43d
+```
+
+Führen zwei SIDs dieselbe Geräte-ID, etwa ein RM, das seinen Melder verloren hat, steht der Platz ohne Modell nur mit `sid` in der Vorlage.
+
+Mit 21 Meldern und allen Entitäten belegt die Firmware rund 16 KB mehr RAM und 27 KB mehr Flash als ohne Melder (103 KB von 512 KB RAM).
 
 ## Log
 
@@ -293,7 +412,7 @@ Fehler auf Kern 1, etwa eine volle Warteschlange oder ein SPI-Überlauf, kommen 
 
 ## Tests
 
-Rahmenschicht, Nachrichten, Modelltabellen, Duplikatfilter, Antworten des Hosts, Sendeplanung, Melderregister mit `nodes.bin`-Format, Erkundung, Netzdetails und Log-Text lassen sich ohne Hardware auf dem PC prüfen:
+Rahmenschicht, Nachrichten, Modelltabellen, Duplikatfilter, Antworten des Hosts, Sendeplanung, Melderregister mit `nodes.bin`-Format, Erkundung, Netzdetails, Zustände und Texte der Melder-Entitäten, YAML-Vorlage und Log-Text lassen sich ohne Hardware auf dem PC prüfen:
 
 ```sh
 make -C tests/host
