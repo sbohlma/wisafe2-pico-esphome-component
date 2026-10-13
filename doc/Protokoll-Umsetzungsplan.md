@@ -1,6 +1,6 @@
 # Umsetzungsplan: W2-Modulprotokoll auf der Pico-2-W-Brücke
 
-Stand: 13.10.2026, Entscheidungen E1–E12 getroffen, E3 und E7 überarbeitet, Stufe 0 umgesetzt und auf der Hardware abgenommen, Init-Sequenz korrigiert (Abschnitt 9), Stufe 1 bis auf die Testtaste abgenommen, Stufe 2 umgesetzt, nach der ersten Hardware-Prüfung überarbeitet (Zeitlimit, Erkundung und Netzdetails getrennt) und nach der zweiten nachgeschärft (Zeitlimit 240 s, Abfragen je Modell und Erreichbarkeit), Stufe 3 umgesetzt und in der Abnahme (zwei Hardware-Prüfungen ausgewertet), vollständige Runde „Netzdetails“ abgenommen. Grundlage ist [PROTOCOL_ANALYSIS_W2_MODULE.md](https://github.com/sbohlma/FireAngel/blob/main/wisafe-mm/docs/PROTOCOL_ANALYSIS_W2_MODULE.md) (im Folgenden „Protokollanalyse“) mit den dort genannten Quellen, vor allem NikNakks [fireangel-pro-connected-esphome](https://github.com/NikNakk/fireangel-pro-connected-esphome), Tho85s [ws2mqtt](https://github.com/Tho85/ws2mqtt) und [wisafe-mm](https://github.com/sbohlma/FireAngel/tree/main/wisafe-mm).
+Stand: 13.10.2026, Entscheidungen E1–E12 getroffen, E3 und E7 überarbeitet, Stufe 0 umgesetzt und auf der Hardware abgenommen, Init-Sequenz korrigiert (Abschnitt 9), Stufe 1 bis auf die Testtaste abgenommen, Stufe 2 umgesetzt, nach der ersten Hardware-Prüfung überarbeitet (Zeitlimit, Erkundung und Netzdetails getrennt) und nach der zweiten nachgeschärft (Zeitlimit 240 s, Abfragen je Modell und Erreichbarkeit), Stufe 3 umgesetzt und in der Abnahme (zwei Hardware-Prüfungen ausgewertet), vollständige Runde „Netzdetails“ abgenommen, Netztest aus Stufe 4 umgesetzt. Grundlage ist [PROTOCOL_ANALYSIS_W2_MODULE.md](https://github.com/sbohlma/FireAngel/blob/main/wisafe-mm/docs/PROTOCOL_ANALYSIS_W2_MODULE.md) (im Folgenden „Protokollanalyse“) mit den dort genannten Quellen, vor allem NikNakks [fireangel-pro-connected-esphome](https://github.com/NikNakk/fireangel-pro-connected-esphome), Tho85s [ws2mqtt](https://github.com/Tho85/ws2mqtt) und [wisafe-mm](https://github.com/sbohlma/FireAngel/tree/main/wisafe-mm).
 
 Ziel: Alle Melder im Netz erscheinen in ESPHome und Home Assistant mit Zustand, Fehlern, Batterie und Ereignissen. Diagnose und Netztest stehen als Funktionen bereit.
 
@@ -370,6 +370,16 @@ Bewusst ausgelassen: Alarm auslösen (`50`), Stummschalten (`61`), Alarm beenden
 
 Abnahme: Diagnose an den WHT-630 ergibt Piepen und `C2`. Netztest lässt alle Melder ertönen.
 
+Umgesetzt am 13.10.2026: der Netztest.
+
+- YAML: `network_test_button` schaltet ihn zu und verlangt `device_id`.
+- Ablauf: `70 dev FF 01 model` aus der eigenen Identität als Funkbefehl, Ende mit der Quittung `46`. Das folgende `41` beantwortet die vorhandene Logik mit `91`. Eine offene Fernanfrage läuft vorher zu Ende.
+- Absicherung: Auslösung nur mit gekoppeltem RM nach dem Init, höchstens ein Test in der Warteschlange, danach 60 s Sperre. Ohne Quittung entfällt die Sperre.
+- Meldung: Log, `network_event` mit dem eigenen Typ `netztest`, `last_event` mit Text. Abgewiesene und gescheiterte Versuche stehen in `last_reply`.
+- Host-Test für den Rahmen; die Brücke hängt keine SID an, das RM ergänzt SID und Folge.
+
+Offen in Stufe 4: die Diagnose. Der Befehl an das RM, der `C1` an eine SID richtet, ist unbekannt, und `C1` wirkt bisher nur am WHT-630. Ein Test je Melder braucht den Funkrahmen hinter `>T sid` des W2-MM (P21).
+
 ### Stufe 5 (später): Pairing-Assistent
 
 Vorgemerkt nach **[E10]**. Bis dahin bleiben netzverändernde Befehle ausgeschlossen: `D3 12 01` (Pairing), `D3 04` (Netzkarte), `D3 19 01 00` (Kopplung löschen) sowie die unbekannten Codes `D3 12 65`, `E6`, `E8`, `E2`. Eingelernt wird über die Taste am Funkmodul.
@@ -427,7 +437,9 @@ Getroffen am 11.10.2026.
 
 ## 8. Nächster Schritt
 
-Hardware-Abnahme mit der Firmware von Stufe 3 (Abschnitt 3) fortsetzen. Geprüft sind Zuordnung, „Status aktualisieren“, Sockel-Entnahme, Ereignisse, die übernommene YAML-Vorlage mit 19 Meldern und eine vollständige Runde „Netzdetails“ mit 240 s. Offen: aus Stufe 2 „Rediscover Network“ in einem Lauf; für Stufe 3 „nicht zugeordnete Melder“ leer mit der neuen Firmware, Melder als Geräte in Home Assistant prüfen und die Testtaste an einem Melder. Die Testtaste schließt zugleich die Abnahme von Stufe 1 ab. Danach folgt Stufe 4 nach Freigabe.
+Hardware-Abnahme mit der Firmware von Stufe 3 (Abschnitt 3) fortsetzen. Geprüft sind Zuordnung, „Status aktualisieren“, Sockel-Entnahme, Ereignisse, die übernommene YAML-Vorlage mit 19 Meldern und eine vollständige Runde „Netzdetails“ mit 240 s. Offen: aus Stufe 2 „Rediscover Network“ in einem Lauf; für Stufe 3 „nicht zugeordnete Melder“ leer mit der neuen Firmware, Melder als Geräte in Home Assistant prüfen und die Testtaste an einem Melder. Die Testtaste schließt zugleich die Abnahme von Stufe 1 ab.
+
+Stufe 4: Netztest auf der Hardware abnehmen. Erwartet im Log: `Sende 70 A5 B8 14 FF 01 11 03 7E`, `46`, `41`, `91`, danach ertönen alle Melder. Zu beobachten: ob die Melder mit eigenen `70` antworten und ob die Brücke Kopien ihres eigenen `70` erhält. Für den Test je Melder den Mitschnitt aus P21 machen.
 
 ## 9. Neue Erkenntnisse zum Protokoll
 
@@ -686,3 +698,12 @@ Beobachtung vom 13.10.2026, dreimal im Log, Deutung vermutet.
 - Während der Netzdetails kamen drei Präsenzmeldungen: `D4 09 08 3B 74 31` um 11:34:56, 91 s nach dem `73` von SID 8; `D4 09 0C 69 D3 33` um 11:45:56, 16 s nach dem `73` von SID 12; `D4 09 0D E8 F1 33` um 11:47:50, während das `72` an SID 13 offen war. Jedes Mal stimmen SID und Geräte-ID mit dem Register überein.
 - In den übrigen gut zwei Stunden kam kein `D4 09`. Alle drei SIDs waren kurz vorher Ziel einer Abfrage. Vermutet: Ein RM meldet sich nach einer Abfrage mit `D4 09` im Netz.
 - Gegenprobe: in weiteren Logs prüfen, ob `D4 09` nur nach Abfragen auftritt.
+
+### P21: Ton an einzelnen Meldern, Stand der Quellen
+
+Zusammenstellung vom 13.10.2026 aus den Quellen, im eigenen Netz noch ungeprüft.
+
+- Testtaste: Ein Melder meldet seinen Test mit `70 dev klasse ergebnis model sid seq`. Ein Host sendet denselben Rahmen ohne SID und Folge. ws2mqtt („Test devices“) und die Arduino-Firmware setzen die Klasse `FF`, dann ertönen alle Melder. ws2mqtt führt dazu die Klassen `41` (CO), `81` (Rauch) und `FF` (alle). Vermutet: Das Klassenbyte wirkt als Gerätemaske. Für einen einzelnen Melder reicht das nicht, denn alle ST-630-DE tragen `81`.
+- Diagnose: `C1` erreicht das Ziel als `C1 00 00 00 00 00 00 01 sid seq`, ohne Geräte-ID. Nur der WHT-630 piept und meldet `C2`; die ST-630-DE ignorieren `C1` (Protokollanalyse, Test mit dem Dongle). Den Befehl an das RM, mit dem ein Host `C1` an eine SID richtet, nennt keine Quelle; der Dongle erzeugt `C1` aus `>D sid`.
+- W2-MM: `>T sid[, n]` heißt „Test – Melder ertönt“, in wisafe-mm `Cmd.test_node`. Der Funkrahmen dazu ist noch nie mitgeschnitten worden. Das `70` mit Gateway-ID von SID 15 aus P18 könnte dazugehören.
+- Gegenprobe: Die Brücke lauscht, am W2-MM geht `>T sid` an einen ST-630-DE, einmal mit dem Melder auf dem Sockel und einmal abgenommen, damit der Rahmen geflutet wird wie `C1` in der Protokollanalyse. Zu notieren: welcher Melder ertönt und jede Zeile `Roh:` oder `70` der Brücke in dieser Zeit. Trägt der Rahmen eine Geräte-ID wie `72`, `C5` und `C7`, kann die Brücke ihn selbst senden, und ein Test je Melder wird möglich.
