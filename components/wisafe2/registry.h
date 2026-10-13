@@ -114,7 +114,8 @@ class Registry {
   // Legt einen leeren Platz an. nullptr bei ungültiger SID oder vollem Register.
   Node *get_or_add(uint8_t sid, uint8_t &changes);
 
-  // Passive Nachrichten und Antworten aus dem Netz. Anfragen (72, C1, C3, C5, C7) legen keinen Platz an.
+  // Passive Nachrichten und Antworten aus dem Netz. Anfragen (72, C1, C3, C5, C7) legen keinen Platz an, Nachrichten
+  // mit der Gateway-ID nur dann, wenn die SID schon einen Platz hat.
   uint8_t apply(const RadioMessage &msg, uint32_t now_ms);
   // D2 (eigenes RM), D4 01, D4 03, D4 04, D4 06, D4 09.
   uint8_t apply(const LocalMessage &msg, uint32_t now_ms);

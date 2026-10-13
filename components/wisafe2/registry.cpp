@@ -314,6 +314,10 @@ uint8_t Registry::apply(const RadioMessage &msg, uint32_t now_ms) {
     }
     return changes;
   }
+  if (msg.has_device && is_gateway_id(msg.device_id) && this->find(msg.sid) == nullptr) {
+    // Auch das W2-MM sendet mit der Gateway-ID, etwa 70 von SID 15, und steht in keiner SID-Map (P8, P18).
+    return changes;
+  }
   Node *node = this->get_or_add(msg.sid, changes);
   if (node == nullptr) {
     return changes;

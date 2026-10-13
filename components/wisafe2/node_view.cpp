@@ -180,6 +180,9 @@ void describe_event(const RadioMessage &msg, const char *name, char *out, size_t
       return;
   }
   char text[64];
+  if ((name == nullptr || name[0] == '\0') && msg.has_device && is_gateway_id(msg.device_id)) {
+    name = "Gateway";
+  }
   if (name != nullptr && name[0] != '\0') {
     std::snprintf(text, sizeof(text), "%s: SID %u (%s)", what, msg.sid, name);
   } else {
