@@ -48,5 +48,19 @@ class WiSafe2RegistryLogButton : public button::Button, public Parented<WiSafe2C
   void press_action() override { this->parent_->log_registry(); }
 };
 
+class WiSafe2TemplateButton : public button::Button, public Parented<WiSafe2Component> {
+ protected:
+  void press_action() override { this->parent_->log_yaml_template(); }
+};
+
+class WiSafe2RefreshButton : public button::Button, public Parented<WiSafe2Component> {
+ public:
+  void set_detector(Detector *detector) { this->detector_ = detector; }
+
+ protected:
+  void press_action() override { this->parent_->refresh_detector(this->detector_); }
+  Detector *detector_{nullptr};
+};
+
 }  // namespace wisafe2
 }  // namespace esphome

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "detector.h"
 #include "discovery.h"
 #include "duplicate_filter.h"
 #include "framing.h"
@@ -8,6 +9,7 @@
 #include "registry.h"
 #include "scheduler.h"
 #include "esphome/components/binary_sensor/binary_sensor.h"
+#include "esphome/components/event/event.h"
 #include "esphome/components/sensor/sensor.h"
 #include "esphome/components/text_sensor/text_sensor.h"
 #include "esphome/core/component.h"
@@ -15,6 +17,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <vector>
 
 namespace esphome {
 namespace wisafe2 {
@@ -37,6 +40,15 @@ class WiSafe2Component : public Component, public Transport {
   void set_rm_firmware_sensor(text_sensor::TextSensor *sensor) { this->rm_firmware_sensor_ = sensor; }
   void set_rm_device_id_sensor(text_sensor::TextSensor *sensor) { this->rm_device_id_sensor_ = sensor; }
   void set_rm_paired_sensor(binary_sensor::BinarySensor *sensor) { this->rm_paired_sensor_ = sensor; }
+  // Stufe 3: Melder aus der YAML und netzweite Entitäten.
+  void add_detector(Detector *detector) { this->detectors_.push_back(detector); }
+  void set_network_alarm_sensor(binary_sensor::BinarySensor *sensor) { this->network_alarm_sensor_ = sensor; }
+  void set_network_silenced_sensor(binary_sensor::BinarySensor *sensor) { this->network_silenced_sensor_ = sensor; }
+  void set_discovery_running_sensor(binary_sensor::BinarySensor *sensor) { this->discovery_running_sensor_ = sensor; }
+  void set_node_count_sensor(sensor::Sensor *sensor) { this->node_count_sensor_ = sensor; }
+  void set_last_event_sensor(text_sensor::TextSensor *sensor) { this->last_event_sensor_ = sensor; }
+  void set_unassigned_sensor(text_sensor::TextSensor *sensor) { this->unassigned_sensor_ = sensor; }
+  void set_network_event(event::Event *event) { this->network_event_ = event; }
 
   void setup() override;
   void loop() override;
@@ -62,10 +74,16 @@ class WiSafe2Component : public Component, public Transport {
   void discover_network();
   // Button „Rediscover Network“: löscht nodes.bin und das Register und erkundet alle SIDs neu.
   void rediscover_network();
-  // Button „Netzdetails“: Remote-Status aller SIDs, Batterie und Fehler aller Melder.
+  // Button „Netzdetails“: Remote-Status aller erreichbaren SIDs, Batterie und Fehlerdetails der Melder,
+  // Fehlerereignisse nur bei gemeldeten Fehlern.
   void query_network_details();
   // Schreibt das Register ins Log, eine Zeile je Knoten.
   void log_registry();
+  // Button „Status aktualisieren“ eines Melders: Remote-Status, Batterie und Fehlerdetails dieses Melders.
+  void refresh_detector(Detector *detector);
+  // Schreibt eine YAML-Vorlage für alle Melder ohne Eintrag in detectors ins Log, verteilt über mehrere
+  // Logzeilen.
+  void log_yaml_template();
 
  protected:
   enum class StartState : uint8_t { WaitNetwork, Settle, Running };
@@ -109,6 +127,12 @@ class WiSafe2Component : public Component, public Transport {
   void mark_dirty_();
   void service_store_(uint32_t now);
 
+  void assign_detectors_();
+  void publish_entities_(uint32_t now);
+  void report_event_(const RadioMessage &msg);
+  bool next_template_node_(const Node *&node);
+  void service_template_(uint32_t now);
+
   Identity identity_{};
   bool auto_discovery_{false};
   uint32_t remote_status_interval_ms_{0};
@@ -124,6 +148,26 @@ class WiSafe2Component : public Component, public Transport {
   text_sensor::TextSensor *rm_device_id_sensor_{nullptr};
   binary_sensor::BinarySensor *rm_paired_sensor_{nullptr};
   const char *status_{nullptr};
+
+  std::vector<Detector *> detectors_;
+  binary_sensor::BinarySensor *network_alarm_sensor_{nullptr};
+  binary_sensor::BinarySensor *network_silenced_sensor_{nullptr};
+  binary_sensor::BinarySensor *discovery_running_sensor_{nullptr};
+  sensor::Sensor *node_count_sensor_{nullptr};
+  text_sensor::TextSensor *last_event_sensor_{nullptr};
+  text_sensor::TextSensor *unassigned_sensor_{nullptr};
+  event::Event *network_event_{nullptr};
+  // Zuordnung der Melder zu den Plätzen im Register, neu berechnet nach jeder Änderung einer Kennung.
+  bool assign_needed_{true};
+  uint64_t assigned_{0};
+  // Veröffentlicht wird gesammelt in loop(): SIDs mit Änderungen oder alles.
+  uint64_t dirty_sids_{0};
+  bool publish_all_{true};
+  bool map_seen_{false};
+  enum class TemplatePhase : uint8_t { Idle, Devices, Detectors };
+  TemplatePhase template_phase_{TemplatePhase::Idle};
+  uint8_t template_sid_{0};
+  uint32_t template_last_ms_{0};
 
   FrameDecoder decoder_;
   Scheduler scheduler_{*this};

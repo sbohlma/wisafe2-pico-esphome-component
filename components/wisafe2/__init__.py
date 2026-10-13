@@ -1,19 +1,27 @@
 from esphome import automation
 import esphome.codegen as cg
-from esphome.components import binary_sensor, button, sensor, text_sensor
+from esphome.components import binary_sensor, button, event, sensor, text_sensor
 import esphome.config_validation as cv
 from esphome.const import (
+    CONF_DEVICE,
     CONF_ID,
     CONF_MODEL,
+    CONF_NAME,
+    DEVICE_CLASS_BATTERY,
     DEVICE_CLASS_CONNECTIVITY,
+    DEVICE_CLASS_PROBLEM,
+    DEVICE_CLASS_RUNNING,
+    DEVICE_CLASS_SMOKE,
+    DEVICE_CLASS_TIMESTAMP,
     DEVICE_CLASS_VOLTAGE,
     ENTITY_CATEGORY_CONFIG,
     ENTITY_CATEGORY_DIAGNOSTIC,
     STATE_CLASS_MEASUREMENT,
+    UNIT_MILLIVOLT,
     UNIT_VOLT,
 )
 
-AUTO_LOAD = ["binary_sensor", "button", "network", "sensor", "text_sensor"]
+AUTO_LOAD = ["binary_sensor", "button", "event", "network", "sensor", "text_sensor"]
 
 wisafe2_ns = cg.esphome_ns.namespace("wisafe2")
 WiSafe2Component = wisafe2_ns.class_("WiSafe2Component", cg.Component)
@@ -25,6 +33,9 @@ WiSafe2DiscoverButton = wisafe2_ns.class_("WiSafe2DiscoverButton", button.Button
 WiSafe2RediscoverButton = wisafe2_ns.class_("WiSafe2RediscoverButton", button.Button)
 WiSafe2DetailsButton = wisafe2_ns.class_("WiSafe2DetailsButton", button.Button)
 WiSafe2RegistryLogButton = wisafe2_ns.class_("WiSafe2RegistryLogButton", button.Button)
+WiSafe2TemplateButton = wisafe2_ns.class_("WiSafe2TemplateButton", button.Button)
+WiSafe2RefreshButton = wisafe2_ns.class_("WiSafe2RefreshButton", button.Button)
+Detector = wisafe2_ns.class_("Detector")
 QueryRemoteStatusAction = wisafe2_ns.class_("QueryRemoteStatusAction", automation.Action)
 QueryIdentityAction = wisafe2_ns.class_("QueryIdentityAction", automation.Action)
 QueryDeviceAction = wisafe2_ns.class_("QueryDeviceAction", automation.Action)
@@ -52,6 +63,18 @@ CONF_AUTO_DISCOVERY = "auto_discovery"
 CONF_REMOTE_STATUS_INTERVAL = "remote_status_interval"
 CONF_BATTERY_INTERVAL = "battery_interval"
 CONF_REMOTE_TIMEOUT = "remote_timeout"
+CONF_DETECTORS = "detectors"
+CONF_NETWORK_ALARM = "network_alarm"
+CONF_NETWORK_SILENCED = "network_silenced"
+CONF_DISCOVERY_RUNNING = "discovery_running"
+CONF_NODE_COUNT = "node_count"
+CONF_LAST_EVENT = "last_event"
+CONF_UNASSIGNED = "unassigned"
+CONF_NETWORK_EVENT = "network_event"
+CONF_TEMPLATE_BUTTON = "template_button"
+
+# Wie event_type() in node_view.cpp.
+EVENT_TYPES = ["alarm", "alarm_ende", "stummschaltung", "test", "fehlerbericht"]
 
 # WST-630, wie Arduino-Firmware und NikNakk; im Paket 11 03.
 DEFAULT_MODEL = 0x0311
@@ -74,11 +97,201 @@ def bridge_device_id(value):
     return value
 
 
+def detector_device_id(value):
+    value = device_id_value(value)
+    if value in ("000000", "030201"):
+        raise cv.Invalid("000000 und 030201 kennzeichnen kein Gerät, hier die SID angeben")
+    return value
+
+
 # Die periodische Planung vergleicht Zeitpunkte mit Vorzeichen; 20 Tage bleiben sicher unter 2^31 ms.
 interval = cv.All(
     cv.positive_time_period_milliseconds,
     cv.Range(min=cv.TimePeriod(minutes=10), max=cv.TimePeriod(days=20)),
 )
+
+
+# Entitäten je Melder: Schlüssel, Plattform, Schema, Name und Setter in Detector. Alle entstehen ohne Angabe;
+# „false“ wählt eine ab.
+DETECTOR_ENTITIES = {
+    "alarm": (
+        "binary_sensor",
+        binary_sensor.binary_sensor_schema(device_class=DEVICE_CLASS_SMOKE),
+        "Alarm",
+        "set_alarm_sensor",
+    ),
+    "fault": (
+        "binary_sensor",
+        binary_sensor.binary_sensor_schema(device_class=DEVICE_CLASS_PROBLEM),
+        "Fehler",
+        "set_fault_sensor",
+    ),
+    "socket_problem": (
+        "binary_sensor",
+        binary_sensor.binary_sensor_schema(
+            device_class=DEVICE_CLASS_PROBLEM, icon="mdi:smoke-detector-off-outline"
+        ),
+        "Sockel-Problem",
+        "set_socket_problem_sensor",
+    ),
+    "battery_low": (
+        "binary_sensor",
+        binary_sensor.binary_sensor_schema(device_class=DEVICE_CLASS_BATTERY),
+        "Batterie",
+        "set_battery_low_sensor",
+    ),
+    "rm_battery_low": (
+        "binary_sensor",
+        binary_sensor.binary_sensor_schema(
+            device_class=DEVICE_CLASS_BATTERY, entity_category=ENTITY_CATEGORY_DIAGNOSTIC
+        ),
+        "RM-Batterie",
+        "set_rm_battery_low_sensor",
+    ),
+    "online": (
+        "binary_sensor",
+        binary_sensor.binary_sensor_schema(
+            device_class=DEVICE_CLASS_CONNECTIVITY, entity_category=ENTITY_CATEGORY_DIAGNOSTIC
+        ),
+        "Im Netz",
+        "set_online_sensor",
+    ),
+    "battery_voltage": (
+        "sensor",
+        sensor.sensor_schema(
+            unit_of_measurement=UNIT_MILLIVOLT,
+            accuracy_decimals=0,
+            device_class=DEVICE_CLASS_VOLTAGE,
+            state_class=STATE_CLASS_MEASUREMENT,
+            entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+        ),
+        "Batteriespannung",
+        "set_battery_voltage_sensor",
+    ),
+    "rm_battery_voltage": (
+        "sensor",
+        sensor.sensor_schema(
+            unit_of_measurement=UNIT_VOLT,
+            accuracy_decimals=2,
+            device_class=DEVICE_CLASS_VOLTAGE,
+            state_class=STATE_CLASS_MEASUREMENT,
+            entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+        ),
+        "RM-Batteriespannung",
+        "set_rm_battery_voltage_sensor",
+    ),
+    "rssi": (
+        "sensor",
+        sensor.sensor_schema(
+            accuracy_decimals=0,
+            icon="mdi:signal",
+            state_class=STATE_CLASS_MEASUREMENT,
+            entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+        ),
+        "Empfangspegel",
+        "set_rssi_sensor",
+    ),
+    "last_seen": (
+        "text_sensor",
+        text_sensor.text_sensor_schema(
+            device_class=DEVICE_CLASS_TIMESTAMP, entity_category=ENTITY_CATEGORY_DIAGNOSTIC
+        ),
+        "Zuletzt gesehen",
+        "set_last_seen_sensor",
+    ),
+    "model": (
+        "text_sensor",
+        text_sensor.text_sensor_schema(
+            icon="mdi:smoke-detector", entity_category=ENTITY_CATEGORY_DIAGNOSTIC
+        ),
+        "Modell",
+        "set_model_sensor",
+    ),
+    "fault_details": (
+        "text_sensor",
+        text_sensor.text_sensor_schema(icon="mdi:alert-circle-outline"),
+        "Fehlerdetails",
+        "set_fault_details_sensor",
+    ),
+    "last_test": (
+        "text_sensor",
+        text_sensor.text_sensor_schema(icon="mdi:check-circle-outline"),
+        "Letzter Test",
+        "set_last_test_sensor",
+    ),
+    "refresh_button": (
+        "button",
+        button.button_schema(
+            WiSafe2RefreshButton, icon="mdi:refresh", entity_category=ENTITY_CATEGORY_DIAGNOSTIC
+        ),
+        "Status aktualisieren",
+        None,
+    ),
+    "events": (
+        "event",
+        event.event_schema(icon="mdi:bell-ring-outline"),
+        "Ereignis",
+        "set_event",
+    ),
+}
+
+
+def entity_option(value):
+    if value is None or value is True:
+        return {}
+    if value is False:
+        return False
+    if isinstance(value, dict):
+        return value
+    raise cv.Invalid("Erwartet false oder die Einstellungen der Entität")
+
+
+DETECTOR_BASE_SCHEMA = cv.Schema(
+    {
+        cv.GenerateID(): cv.declare_id(Detector),
+        cv.Required(CONF_NAME): cv.string_strict,
+        cv.Optional(CONF_SID): cv.int_range(min=0, max=63),
+        cv.Optional(CONF_DEVICE_ID): detector_device_id,
+        # Sub-Device aus esphome: devices; der Schlüssel device_id an den Entitäten bezeichnet es ebenfalls.
+        cv.Optional(CONF_DEVICE): cv.validate_id_name,
+        **{cv.Optional(key): entity_option for key in DETECTOR_ENTITIES},
+    }
+)
+
+
+def detector_schema(value):
+    """Ergänzt Name und Sub-Device jeder Entität vor deren Prüfung, damit die Duplikatprüfung von ESPHome greift."""
+    config = cv.All(DETECTOR_BASE_SCHEMA, cv.has_at_least_one_key(CONF_SID, CONF_DEVICE_ID))(value)
+    for key, (_, schema, default_name, _) in DETECTOR_ENTITIES.items():
+        raw = config.get(key, {})
+        if raw is False:
+            config[key] = False
+            continue
+        raw = dict(raw)
+        if CONF_DEVICE in config:
+            raw.setdefault(CONF_NAME, default_name)
+            raw.setdefault(CONF_DEVICE_ID, config[CONF_DEVICE])
+        else:
+            raw.setdefault(CONF_NAME, f"{config[CONF_NAME]} {default_name}")
+        with cv.prepend_path(key):
+            config[key] = schema(raw)
+    return config
+
+
+def unique_detectors(detectors):
+    for field in (CONF_SID, CONF_DEVICE_ID):
+        seen = {}
+        for index, detector in enumerate(detectors):
+            if field not in detector:
+                continue
+            value = detector[field]
+            if value in seen:
+                raise cv.Invalid(
+                    f"{field} {value} steht schon bei \"{seen[value]}\"",
+                    path=[index, field],
+                )
+            seen[value] = detector[CONF_NAME]
+    return detectors
 
 
 CONFIG_SCHEMA = cv.Schema(
@@ -89,7 +302,7 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Optional(CONF_AUTO_DISCOVERY, default=False): cv.boolean,
         cv.Optional(CONF_REMOTE_STATUS_INTERVAL, default="19h"): interval,
         cv.Optional(CONF_BATTERY_INTERVAL, default="24h"): interval,
-        cv.Optional(CONF_REMOTE_TIMEOUT, default="180s"): cv.All(
+        cv.Optional(CONF_REMOTE_TIMEOUT, default="240s"): cv.All(
             cv.positive_time_period_milliseconds,
             cv.Range(min=cv.TimePeriod(seconds=30), max=cv.TimePeriod(minutes=10)),
         ),
@@ -171,8 +384,68 @@ CONFIG_SCHEMA = cv.Schema(
             entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
             icon="mdi:format-list-bulleted",
         ),
+        cv.Optional(CONF_TEMPLATE_BUTTON): button.button_schema(
+            WiSafe2TemplateButton,
+            entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+            icon="mdi:file-document-outline",
+        ),
+        cv.Optional(CONF_NETWORK_ALARM): binary_sensor.binary_sensor_schema(
+            device_class=DEVICE_CLASS_SMOKE,
+        ),
+        cv.Optional(CONF_NETWORK_SILENCED): binary_sensor.binary_sensor_schema(
+            icon="mdi:volume-off",
+        ),
+        cv.Optional(CONF_DISCOVERY_RUNNING): binary_sensor.binary_sensor_schema(
+            device_class=DEVICE_CLASS_RUNNING,
+            entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+        ),
+        cv.Optional(CONF_NODE_COUNT): sensor.sensor_schema(
+            accuracy_decimals=0,
+            icon="mdi:lan",
+            state_class=STATE_CLASS_MEASUREMENT,
+            entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+        ),
+        cv.Optional(CONF_LAST_EVENT): text_sensor.text_sensor_schema(
+            icon="mdi:history",
+        ),
+        cv.Optional(CONF_UNASSIGNED): text_sensor.text_sensor_schema(
+            icon="mdi:help-network-outline",
+            entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+        ),
+        cv.Optional(CONF_NETWORK_EVENT): event.event_schema(
+            icon="mdi:bell-ring-outline",
+        ),
+        cv.Optional(CONF_DETECTORS, default=[]): cv.All(
+            cv.ensure_list(detector_schema), unique_detectors
+        ),
     }
 ).extend(cv.COMPONENT_SCHEMA)
+
+
+async def detector_to_code(parent, config):
+    det = cg.new_Pvariable(config[CONF_ID], config[CONF_NAME], config.get(CONF_SID, 0xFF))
+    if CONF_DEVICE_ID in config:
+        display = bytes.fromhex(config[CONF_DEVICE_ID])
+        cg.add(det.set_device_id(display[2], display[1], display[0]))
+    for key, (platform, _, _, setter) in DETECTOR_ENTITIES.items():
+        conf = config[key]
+        if conf is False:
+            continue
+        if platform == "binary_sensor":
+            obj = await binary_sensor.new_binary_sensor(conf)
+        elif platform == "sensor":
+            obj = await sensor.new_sensor(conf)
+        elif platform == "text_sensor":
+            obj = await text_sensor.new_text_sensor(conf)
+        elif platform == "event":
+            obj = await event.new_event(conf, event_types=EVENT_TYPES)
+        else:
+            obj = await button.new_button(conf)
+            cg.add(obj.set_parent(parent))
+            cg.add(obj.set_detector(det))
+        if setter is not None:
+            cg.add(getattr(det, setter)(obj))
+    cg.add(parent.add_detector(det))
 
 
 async def to_code(config):
@@ -193,6 +466,8 @@ async def to_code(config):
         CONF_LAST_REPLY: var.set_last_reply_sensor,
         CONF_RM_FIRMWARE: var.set_rm_firmware_sensor,
         CONF_RM_DEVICE_ID: var.set_rm_device_id_sensor,
+        CONF_LAST_EVENT: var.set_last_event_sensor,
+        CONF_UNASSIGNED: var.set_unassigned_sensor,
     }
     for key, setter in text_sensors.items():
         if key in config:
@@ -204,15 +479,30 @@ async def to_code(config):
         CONF_RM_BATTERY: var.set_rm_battery_sensor,
         CONF_RM_RSSI: var.set_rm_rssi_sensor,
         CONF_RM_RADIO_FAULTS: var.set_rm_radio_faults_sensor,
+        CONF_NODE_COUNT: var.set_node_count_sensor,
     }
     for key, setter in sensors.items():
         if key in config:
             sens = await sensor.new_sensor(config[key])
             cg.add(setter(sens))
 
-    if CONF_RM_PAIRED in config:
-        sens = await binary_sensor.new_binary_sensor(config[CONF_RM_PAIRED])
-        cg.add(var.set_rm_paired_sensor(sens))
+    binary_sensors = {
+        CONF_RM_PAIRED: var.set_rm_paired_sensor,
+        CONF_NETWORK_ALARM: var.set_network_alarm_sensor,
+        CONF_NETWORK_SILENCED: var.set_network_silenced_sensor,
+        CONF_DISCOVERY_RUNNING: var.set_discovery_running_sensor,
+    }
+    for key, setter in binary_sensors.items():
+        if key in config:
+            sens = await binary_sensor.new_binary_sensor(config[key])
+            cg.add(setter(sens))
+
+    if CONF_NETWORK_EVENT in config:
+        evt = await event.new_event(config[CONF_NETWORK_EVENT], event_types=EVENT_TYPES)
+        cg.add(var.set_network_event(evt))
+
+    for detector in config[CONF_DETECTORS]:
+        await detector_to_code(var, detector)
 
     for key in (
         CONF_INIT_BUTTON,
@@ -222,6 +512,7 @@ async def to_code(config):
         CONF_REDISCOVER_BUTTON,
         CONF_DETAILS_BUTTON,
         CONF_REGISTRY_LOG_BUTTON,
+        CONF_TEMPLATE_BUTTON,
     ):
         if key in config:
             btn = await button.new_button(config[key])
