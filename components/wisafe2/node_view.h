@@ -44,7 +44,8 @@ const char *event_type(RadioType type);
 // Eine Zeile für „letztes Ereignis“, etwa "Alarm: SID 4 (Flur), Rauch". name darf nullptr sein.
 void describe_event(const RadioMessage &msg, const char *name, char *out, size_t out_len);
 
-// Knoten, die als Melder in die YAML gehören: alle außer eigenem RM, Gateway-RM und RM ohne Melder.
+// Knoten, die als Melder in die YAML gehören: alle mit bekannter Geräte-ID außer eigenem RM, Gateway-RM und
+// RM ohne Melder. Ein Knoten, der nie geantwortet hat, kann ebenso gut ein RM ohne Melder sein.
 bool node_assignable(const Node &node);
 // device_class der Alarm-Entität passend zur Klasse: "smoke", "heat", "carbon_monoxide"; sonst nullptr.
 const char *alarm_device_class(uint8_t device_class);

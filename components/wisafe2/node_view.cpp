@@ -211,7 +211,7 @@ void describe_event(const RadioMessage &msg, const char *name, char *out, size_t
 }
 
 bool node_assignable(const Node &node) {
-  return !node.is_own() && !node.is_gateway() && (node.flags & NODE_TYPE_UNKNOWN) == 0;
+  return node.has_device() && !node.is_own() && !node.is_gateway() && (node.flags & NODE_TYPE_UNKNOWN) == 0;
 }
 
 const char *alarm_device_class(uint8_t device_class) {
