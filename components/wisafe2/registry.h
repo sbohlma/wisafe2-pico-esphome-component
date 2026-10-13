@@ -87,6 +87,8 @@ struct Node {
   // Melder mit Geräte-ID und Modell, die C7 und 72 beantworten. Schnittstellen (W2-TSL, IFG-100, IFG-200)
   // melden keine Melderfehler.
   bool is_detector() const;
+  // Melder, deren C8 eine Batteriespannung enthält. Der WHT-630 liefert dort keinen Wert (P13).
+  bool has_battery_report() const;
   // C5 beantworten nur WST-630 und ST-630-DE.
   bool has_fault_events_support() const;
   // Vollständiger Eintrag: Geräte-ID und Klasse bekannt, oder als Gateway bzw. RM ohne Melder erkannt.
@@ -103,6 +105,12 @@ class Registry {
   Node *find(uint8_t sid);
   const Node *find(uint8_t sid) const;
   const Node *find_device(const uint8_t *device_id) const;
+  // Melder aus der YAML: über die Geräte-ID, sonst über die SID. Ist eine Geräte-ID angegeben, gilt der Platz der
+  // SID nur, solange dort keine andere Geräte-ID steht. device_id nullptr oder 000000 heißt: nur SID.
+  const Node *resolve(uint8_t sid, const uint8_t *device_id) const;
+  // Active, sobald ein Knoten im Alarm ist; Ended, wenn mindestens ein Alarm endete und keiner aktiv ist.
+  AlarmState network_alarm() const;
+  bool any_silenced() const;
   // Legt einen leeren Platz an. nullptr bei ungültiger SID oder vollem Register.
   Node *get_or_add(uint8_t sid, uint8_t &changes);
 

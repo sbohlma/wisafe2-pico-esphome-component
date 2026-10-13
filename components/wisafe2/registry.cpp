@@ -66,6 +66,8 @@ bool Node::is_detector() const {
   }
 }
 
+bool Node::has_battery_report() const { return this->is_detector() && this->model != MODEL_WHT_630; }
+
 bool Node::has_fault_events_support() const {
   return this->is_detector() && (this->model == MODEL_WST_630 || this->model == MODEL_ST_630_DE);
 }
@@ -137,6 +139,41 @@ const Node *Registry::find_device(const uint8_t *device_id) const {
     }
   }
   return found;
+}
+
+const Node *Registry::resolve(uint8_t sid, const uint8_t *device_id) const {
+  if (device_id == nullptr || is_zero_id(device_id)) {
+    return this->find(sid);
+  }
+  const Node *node = this->find_device(device_id);
+  if (node != nullptr) {
+    return node;
+  }
+  node = this->find(sid);
+  return node != nullptr && !node->has_device() ? node : nullptr;
+}
+
+AlarmState Registry::network_alarm() const {
+  AlarmState state = AlarmState::Unknown;
+  for (size_t index = 0; index < this->count_; ++index) {
+    const AlarmState alarm = this->nodes_[index].alarm;
+    if (alarm == AlarmState::Active) {
+      return AlarmState::Active;
+    }
+    if (alarm == AlarmState::Ended) {
+      state = AlarmState::Ended;
+    }
+  }
+  return state;
+}
+
+bool Registry::any_silenced() const {
+  for (size_t index = 0; index < this->count_; ++index) {
+    if (this->nodes_[index].silenced) {
+      return true;
+    }
+  }
+  return false;
 }
 
 Node *Registry::get_or_add(uint8_t sid, uint8_t &changes) {
@@ -325,8 +362,10 @@ uint8_t Registry::apply(const RadioMessage &msg, uint32_t now_ms) {
       std::memcpy(node->fault_events, msg.events, 3);
       break;
     case RadioType::Battery:
-      node->has_battery = true;
-      node->battery_mv = msg.value16;
+      if (node->model != MODEL_WHT_630) {
+        node->has_battery = true;
+        node->battery_mv = msg.value16;
+      }
       break;
     default:
       break;
