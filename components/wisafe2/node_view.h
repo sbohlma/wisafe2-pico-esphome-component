@@ -52,7 +52,7 @@ const char *alarm_device_class(uint8_t device_class);
 // bleibt es für den Platz ohne Modell bei der SID.
 bool template_by_device(const Registry &registry, const Node &node);
 // Vorschläge für die YAML-Vorlage: Name "ST-630-DE 2FE43D" bzw. "Melder SID 14", Sub-Device-ID
-// "melder_2fe43d" bzw. "melder_sid_14".
+// "alarm_2FE43D" bzw. "alarm_sid_14".
 void template_name(const Node &node, bool by_device, char *out, size_t out_len);
 void template_device_key(const Node &node, bool by_device, char *out, size_t out_len);
 // "SID 4, 7, 12" für die Knoten aus node_assignable(), deren Bit in assigned fehlt; "keine", wenn alle

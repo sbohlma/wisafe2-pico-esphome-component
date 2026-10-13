@@ -2,7 +2,6 @@
 
 #include "catalog.h"
 
-#include <cctype>
 #include <cstdio>
 #include <cstring>
 #include <ctime>
@@ -253,16 +252,13 @@ void template_device_key(const Node &node, bool by_device, char *out, size_t out
   start(out, out_len);
   char text[24];
   if (!by_device) {
-    std::snprintf(text, sizeof(text), "melder_sid_%u", node.sid);
+    std::snprintf(text, sizeof(text), "alarm_sid_%u", node.sid);
     append(out, out_len, text);
     return;
   }
   char id[8];
   format_device_id(node.device_id, id, sizeof(id));
-  for (char *c = id; *c != '\0'; ++c) {
-    *c = static_cast<char>(std::tolower(static_cast<unsigned char>(*c)));
-  }
-  std::snprintf(text, sizeof(text), "melder_%s", id);
+  std::snprintf(text, sizeof(text), "alarm_%s", id);
   append(out, out_len, text);
 }
 

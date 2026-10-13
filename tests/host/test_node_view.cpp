@@ -195,14 +195,14 @@ void test_template() {
   template_name(detector, true, text, sizeof(text));
   CHECK(std::strcmp(text, "ST-630-DE 2FE43D") == 0);
   template_device_key(detector, true, text, sizeof(text));
-  CHECK(std::strcmp(text, "melder_2fe43d") == 0);
+  CHECK(std::strcmp(text, "alarm_2FE43D") == 0);
   // SID 24 führt dieselbe Geräte-ID ohne Modell (P14): Die Vorlage nennt sie über die SID.
   const Node &rm = *registry.find(24);
   CHECK(!template_by_device(registry, rm));
   template_name(rm, false, text, sizeof(text));
   CHECK(std::strcmp(text, "Melder SID 24") == 0);
   template_device_key(rm, false, text, sizeof(text));
-  CHECK(std::strcmp(text, "melder_sid_24") == 0);
+  CHECK(std::strcmp(text, "alarm_sid_24") == 0);
 
   apply(registry, {0xD4, 0x03, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00});
   const Node &unknown = *registry.find(16);
