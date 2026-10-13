@@ -4,6 +4,7 @@
 #include "core_ipc.h"
 #include "frame_analyzer.h"
 #include "node_store.h"
+#include "node_view.h"
 #include "esphome/components/network/util.h"
 #include "esphome/core/hal.h"
 #include "esphome/core/log.h"
@@ -11,6 +12,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <ctime>
 
 namespace esphome {
 namespace wisafe2 {
@@ -34,6 +36,8 @@ static constexpr uint32_t STORE_DELAY_MS = 5000;
 static constexpr uint32_t STORE_QUIET_MS = 1000;
 // Während einer Erkundung ist fast immer eine Fernanfrage offen; spätestens dann wird trotzdem geschrieben.
 static constexpr uint32_t STORE_FORCE_MS = 60000;
+// Die YAML-Vorlage geht in Abständen ins Log, damit API-Log-Clients keine Zeilen verlieren.
+static constexpr uint32_t TEMPLATE_STEP_MS = 100;
 
 static const char *const STATUS_WAIT_NETWORK = "warte auf WLAN";
 static const char *const STATUS_INIT = "Init läuft";
@@ -253,6 +257,7 @@ void WiSafe2Component::rediscover_network() {
   ESP_LOGI(TAG, "Register und nodes.bin werden gelöscht, Erkundung aller SIDs folgt");
   this->registry_.clear();
   this->discovery_.clear();
+  this->assign_needed_ = true;
   this->store_dirty_ = false;
   if (this->store_ok_ && !node_store_remove()) {
     ESP_LOGW(TAG, "nodes.bin ließ sich nicht löschen");
@@ -298,7 +303,197 @@ void WiSafe2Component::query_after_init_() {
   this->query_sid_map();
 }
 
+void WiSafe2Component::refresh_detector(Detector *detector) {
+  if (this->assign_needed_) {
+    this->assign_detectors_();
+  }
+  const Node *node = this->registry_.find(detector->sid());
+  if (node == nullptr) {
+    ESP_LOGW(TAG, "Melder \"%s\" ist keinem Knoten im Register zugeordnet; erst das Netz erkunden", detector->name());
+    return;
+  }
+  if (node->is_own() || !this->paired_) {
+    ESP_LOGW(TAG, "Melder \"%s\": %s", detector->name(), node->is_own() ? "eigenes RM der Brücke" : "RM ungekoppelt");
+    return;
+  }
+  ESP_LOGI(TAG, "Status von \"%s\" (SID %u) angefordert", detector->name(), node->sid);
+  this->discovery_.want(node->sid, QUERY_DETAILS);
+}
+
+void WiSafe2Component::assign_detectors_() {
+  this->assign_needed_ = false;
+  this->publish_all_ = true;
+  uint64_t assigned = 0;
+  for (Detector *detector : this->detectors_) {
+    const Node *node = detector->assign(this->registry_);
+    if (node != nullptr) {
+      assigned |= uint64_t{1} << node->sid;
+    }
+  }
+  this->assigned_ = assigned;
+}
+
+void WiSafe2Component::publish_entities_(uint32_t now) {
+  if (this->assign_needed_) {
+    this->assign_detectors_();
+  }
+  if (this->discovery_running_sensor_ != nullptr) {
+    this->discovery_running_sensor_->publish_state(this->discovery_.campaign_running());
+  }
+  if (!this->publish_all_ && this->dirty_sids_ == 0) {
+    return;
+  }
+  const int64_t epoch = static_cast<int64_t>(::time(nullptr));
+  for (Detector *detector : this->detectors_) {
+    const uint8_t sid = detector->sid();
+    if (this->publish_all_ || (sid <= MAX_SID && ((this->dirty_sids_ >> sid) & 1u) != 0)) {
+      detector->publish(this->registry_.find(sid), this->map_seen_, now, epoch);
+    }
+  }
+  const AlarmState alarm = this->registry_.network_alarm();
+  publish_tri(this->network_alarm_sensor_, alarm == AlarmState::Active  ? Tri::On
+                                           : alarm == AlarmState::Ended ? Tri::Off
+                                                                        : Tri::Unknown);
+  if (this->network_silenced_sensor_ != nullptr) {
+    this->network_silenced_sensor_->publish_state(this->registry_.any_silenced());
+  }
+  if (this->map_seen_ && this->node_count_sensor_ != nullptr) {
+    int members = 0;
+    for (size_t index = 0; index < this->registry_.count(); ++index) {
+      members += this->registry_.at(index).in_network ? 1 : 0;
+    }
+    publish_number(this->node_count_sensor_, true, static_cast<float>(members));
+  }
+  if (this->unassigned_sensor_ != nullptr) {
+    char text[200];
+    describe_unassigned(this->registry_, this->assigned_, text, sizeof(text));
+    publish_text(this->unassigned_sensor_, text);
+  }
+  this->dirty_sids_ = 0;
+  this->publish_all_ = false;
+}
+
+void WiSafe2Component::report_event_(const RadioMessage &msg) {
+  const char *type = event_type(msg.type);
+  if (type == nullptr) {
+    return;
+  }
+  if (this->assign_needed_) {
+    this->assign_detectors_();
+  }
+  const char *name = nullptr;
+  for (Detector *detector : this->detectors_) {
+    if (detector->sid() == msg.sid) {
+      detector->trigger(type);
+      if (name == nullptr) {
+        name = detector->name();
+      }
+    }
+  }
+  if (this->network_event_ != nullptr) {
+    this->network_event_->trigger(type);
+  }
+  char text[160];
+  describe_event(msg, name, text, sizeof(text));
+  ESP_LOGI(TAG, "Ereignis: %s", text);
+  if (this->last_event_sensor_ != nullptr) {
+    this->last_event_sensor_->publish_state(text);
+  }
+}
+
+bool WiSafe2Component::next_template_node_(const Node *&node) {
+  for (; this->template_sid_ <= MAX_SID; ++this->template_sid_) {
+    node = this->registry_.find(this->template_sid_);
+    if (node != nullptr && node_assignable(*node) && ((this->assigned_ >> this->template_sid_) & 1u) == 0) {
+      ++this->template_sid_;
+      return true;
+    }
+  }
+  return false;
+}
+
+void WiSafe2Component::log_yaml_template() {
+  if (this->assign_needed_) {
+    this->assign_detectors_();
+  }
+  int count = 0;
+  for (uint8_t sid = 0; sid <= MAX_SID; ++sid) {
+    const Node *node = this->registry_.find(sid);
+    count += node != nullptr && node_assignable(*node) && ((this->assigned_ >> sid) & 1u) == 0 ? 1 : 0;
+  }
+  if (count == 0) {
+    ESP_LOGI(TAG, "YAML-Vorlage: Alle Melder im Register stehen in detectors");
+    return;
+  }
+  ESP_LOGI(TAG, "YAML-Vorlage für %d Melder ohne Eintrag in detectors, Namen nach Wunsch anpassen:\n"
+                "esphome:\n"
+                "  devices:",
+           count);
+  this->template_phase_ = TemplatePhase::Devices;
+  this->template_sid_ = 0;
+  this->template_last_ms_ = millis();
+}
+
+void WiSafe2Component::service_template_(uint32_t now) {
+  if (this->template_phase_ == TemplatePhase::Idle || now - this->template_last_ms_ < TEMPLATE_STEP_MS) {
+    return;
+  }
+  this->template_last_ms_ = now;
+  const Node *node = nullptr;
+  if (!this->next_template_node_(node)) {
+    if (this->template_phase_ == TemplatePhase::Devices) {
+      ESP_LOGI(TAG, "YAML-Vorlage, Fortsetzung:\n"
+                    "wisafe2:\n"
+                    "  detectors:");
+      this->template_phase_ = TemplatePhase::Detectors;
+      this->template_sid_ = 0;
+    } else {
+      ESP_LOGI(TAG, "YAML-Vorlage Ende");
+      this->template_phase_ = TemplatePhase::Idle;
+    }
+    return;
+  }
+  const bool by_device = template_by_device(this->registry_, *node);
+  char name[40];
+  char key[24];
+  template_name(*node, by_device, name, sizeof(name));
+  template_device_key(*node, by_device, key, sizeof(key));
+  if (this->template_phase_ == TemplatePhase::Devices) {
+    ESP_LOGI(TAG, "YAML-Vorlage, SID %u:\n"
+                  "    - id: %s\n"
+                  "      name: \"%s\"",
+             node->sid, key, name);
+    return;
+  }
+  char id_line[40] = "";
+  if (by_device) {
+    char id[8];
+    format_device_id(node->device_id, id, sizeof(id));
+    std::snprintf(id_line, sizeof(id_line), "\n      device_id: \"%s\"", id);
+  }
+  const char *device_class = node->has_class() ? alarm_device_class(node->device_class) : nullptr;
+  char alarm_lines[64] = "";
+  if (device_class != nullptr && std::strcmp(device_class, "smoke") != 0) {
+    std::snprintf(alarm_lines, sizeof(alarm_lines), "\n      alarm:\n        device_class: %s", device_class);
+  }
+  ESP_LOGI(TAG, "YAML-Vorlage, SID %u:\n"
+                "    - sid: %u%s\n"
+                "      name: \"%s\"\n"
+                "      device: %s%s",
+           node->sid, node->sid, id_line, name, key, alarm_lines);
+}
+
 void WiSafe2Component::note_changes_(uint8_t sid, uint8_t changes) {
+  if ((changes & (CHANGE_NEW | CHANGE_IDENTITY | CHANGE_DEVICE)) != 0) {
+    this->assign_needed_ = true;
+  }
+  if (changes != 0) {
+    if (sid <= MAX_SID) {
+      this->dirty_sids_ |= uint64_t{1} << sid;
+    } else {
+      this->publish_all_ = true;
+    }
+  }
   if ((changes & CHANGE_IDENTITY) != 0) {
     this->mark_dirty_();
   }
@@ -402,6 +597,7 @@ void WiSafe2Component::service_discovery_(uint32_t now) {
     ESP_LOGI(TAG, "%s abgeschlossen nach %u s", this->discovery_.campaign_name(),
              static_cast<unsigned>((now - this->discovery_started_ms_) / 1000u));
     this->log_registry();
+    this->log_yaml_template();
   }
 }
 
@@ -624,13 +820,15 @@ void WiSafe2Component::handle_local_(const LocalMessage &msg, uint32_t now) {
         this->rm_paired_sensor_->publish_state(this->paired_);
       }
       this->update_module_status_();
-      this->note_changes_(NO_SID, this->registry_.apply(msg, now));
+      this->map_seen_ = true;
+      this->note_changes_(NO_SID, this->registry_.apply(msg, now) | CHANGE_STATE);
       if (this->paired_ && this->discovery_.waiting_for_map()) {
         this->start_discovery_(msg.map);
       }
       break;
     case LocalType::NewNetworkMap:
-      this->note_changes_(NO_SID, this->registry_.apply(msg, now));
+      this->map_seen_ = true;
+      this->note_changes_(NO_SID, this->registry_.apply(msg, now) | CHANGE_STATE);
       if (this->auto_discovery_) {
         this->want_unknown_(msg.map);
       }
@@ -674,9 +872,13 @@ void WiSafe2Component::handle_local_(const LocalMessage &msg, uint32_t now) {
 
 void WiSafe2Component::handle_radio_(const RadioMessage &msg, uint32_t now) {
   this->note_changes_(msg.sid, this->registry_.apply(msg, now));
+  this->report_event_(msg);
+  if (msg.type == RadioType::FaultDetails) {
+    this->discovery_.on_fault_details(msg.sid, msg.value16);
+  }
   if (this->auto_discovery_ && msg.type == RadioType::Fault && (msg.value & 0x02) != 0) {
-    // Ist 0x02 gesetzt, stehen die Einzelheiten in 73 und C6.
-    this->discovery_.want(msg.sid, QUERY_FAULT_DETAILS | QUERY_FAULT_EVENTS);
+    // Ist 0x02 gesetzt, stehen die Einzelheiten in 73; meldet 73 Fehler, folgt C6.
+    this->discovery_.want(msg.sid, QUERY_FAULT_DETAILS);
   }
   if (!is_host_request(msg.type) || !this->identity_.valid) {
     return;
@@ -789,6 +991,8 @@ void WiSafe2Component::loop() {
       this->service_store_(now);
       break;
   }
+  this->publish_entities_(now);
+  this->service_template_(now);
 }
 
 void WiSafe2Component::dump_config() {
@@ -821,6 +1025,17 @@ void WiSafe2Component::dump_config() {
   LOG_TEXT_SENSOR("  ", "RM-Firmware", this->rm_firmware_sensor_);
   LOG_TEXT_SENSOR("  ", "RM-Geräte-ID", this->rm_device_id_sensor_);
   LOG_BINARY_SENSOR("  ", "RM gekoppelt", this->rm_paired_sensor_);
+  LOG_BINARY_SENSOR("  ", "Alarm im Netz", this->network_alarm_sensor_);
+  LOG_BINARY_SENSOR("  ", "Stummschaltung im Netz", this->network_silenced_sensor_);
+  LOG_BINARY_SENSOR("  ", "Erkundung läuft", this->discovery_running_sensor_);
+  LOG_SENSOR("  ", "Anzahl Knoten", this->node_count_sensor_);
+  LOG_TEXT_SENSOR("  ", "Letztes Ereignis", this->last_event_sensor_);
+  LOG_TEXT_SENSOR("  ", "Nicht zugeordnete Melder", this->unassigned_sensor_);
+  LOG_EVENT("  ", "Ereignis im Netz", this->network_event_);
+  ESP_LOGCONFIG(TAG, "  Melder in der YAML: %u", static_cast<unsigned>(this->detectors_.size()));
+  for (const Detector *detector : this->detectors_) {
+    detector->dump_config("    ");
+  }
   ESP_LOGCONFIG(TAG, "  SPI-Slave Kern 1: GP16 MOSI, GP17 CS, GP18 SCK, GP19 MISO, GP20 IRQ");
   ESP_LOGCONFIG(TAG, "  Rahmen maskiert, 500 ms Ruhe zwischen Befehlen, Init D3 19 50 00");
 }
