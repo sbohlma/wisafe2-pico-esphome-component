@@ -174,12 +174,101 @@ void test_details() {
   // Eine ausgebliebene Antwort beendet die Schritte nicht.
   discovery.on_result(14, QUERY_BATTERY, Outcome::Timeout);
   CHECK(expect_next(discovery, registry, 14, QUERY_FAULT_DETAILS));
+  // 73 ohne Fehler: kein C5.
+  discovery.on_fault_details(14, 0x0000);
   discovery.on_result(14, QUERY_FAULT_DETAILS, Outcome::Ok);
-  CHECK(expect_next(discovery, registry, 14, QUERY_FAULT_EVENTS));
+  CHECK(discovery.take_finished());
+  CHECK(!discovery.has_work());
+
+  // 73 mit Fehlern: C5 folgt für dieselbe SID, bevor die Runde endet.
+  discovery.request(Discovery::Scope::Details);
+  CHECK_EQ(discovery.on_map(uint64_t{1} << 14, registry, OWN_SID), 1);
+  CHECK(expect_next(discovery, registry, 14, QUERY_REMOTE_STATUS));
+  // Ein 73 zu einer anderen offenen Abfrage zählt nicht.
+  discovery.on_fault_details(14, 0x0004);
+  discovery.on_result(14, QUERY_REMOTE_STATUS, Outcome::Ok);
+  CHECK(expect_next(discovery, registry, 14, QUERY_BATTERY));
+  discovery.on_result(14, QUERY_BATTERY, Outcome::Ok);
+  CHECK(expect_next(discovery, registry, 14, QUERY_FAULT_DETAILS));
+  discovery.on_fault_details(3, 0x0004);
+  discovery.on_fault_details(14, 0x0004);
+  discovery.on_result(14, QUERY_FAULT_DETAILS, Outcome::Ok);
   CHECK(!discovery.take_finished());
+  CHECK(expect_next(discovery, registry, 14, QUERY_FAULT_EVENTS));
   discovery.on_result(14, QUERY_FAULT_EVENTS, Outcome::Ok);
   CHECK(discovery.take_finished());
   CHECK(!discovery.has_work());
+}
+
+void test_details_skip_unreachable() {
+  Registry registry;
+  prepare(registry);
+  registry.on_query_result(14, QUERY_REMOTE_STATUS, Outcome::Unreachable);
+  Discovery discovery;
+  // Netzdetails lassen die unerreichbare SID 14 aus.
+  discovery.request(Discovery::Scope::Details);
+  CHECK_EQ(discovery.on_map(MAP, registry, OWN_SID), 1);
+  CHECK(expect_next(discovery, registry, 3, QUERY_REMOTE_STATUS));
+  discovery.on_result(3, QUERY_REMOTE_STATUS, Outcome::Timeout);
+  DiscoveryTask task;
+  CHECK(!discovery.next(registry, task));
+  CHECK(discovery.take_finished());
+
+  // Die Erkundung prüft SID 14 erneut, obwohl ihr Eintrag vollständig ist; C4 entfällt.
+  discovery.request(Discovery::Scope::Identify);
+  CHECK_EQ(discovery.on_map(MAP, registry, OWN_SID), 2);
+  CHECK(expect_next(discovery, registry, 3, QUERY_LOCATE));
+  discovery.on_result(3, QUERY_REMOTE_STATUS, Outcome::Unreachable);
+  CHECK(expect_next(discovery, registry, 14, QUERY_REMOTE_STATUS));
+  apply(registry, {0xD4, 0x06, 0x0E, 0x64, 0x8C, 0x8C, 0x7D, 0xEF, 0x3D, 0xE4, 0x2F, 0x00, 0x00});
+  discovery.on_result(14, QUERY_REMOTE_STATUS, Outcome::Ok);
+  CHECK(!discovery.next(registry, task));
+  CHECK(discovery.take_finished());
+  CHECK(registry.find(14)->reach == Reach::Reachable);
+
+  // Wieder erreichbar: die nächsten Netzdetails fragen SID 14 ab.
+  discovery.request(Discovery::Scope::Details);
+  CHECK_EQ(discovery.on_map(uint64_t{1} << 14, registry, OWN_SID), 1);
+  CHECK(expect_next(discovery, registry, 14, QUERY_REMOTE_STATUS));
+  discovery.clear();
+
+  // Erkundung und Netzdetails gemeinsam: die erneute Prüfung entscheidet über die Details.
+  registry.on_query_result(14, QUERY_REMOTE_STATUS, Outcome::Unreachable);
+  discovery.request(Discovery::Scope::Identify);
+  discovery.request(Discovery::Scope::Details);
+  CHECK_EQ(discovery.on_map(uint64_t{1} << 14, registry, OWN_SID), 1);
+  CHECK(expect_next(discovery, registry, 14, QUERY_REMOTE_STATUS));
+  discovery.on_result(14, QUERY_REMOTE_STATUS, Outcome::Unreachable);
+  CHECK(!discovery.next(registry, task));
+  CHECK(discovery.take_finished());
+}
+
+void test_wht_without_battery() {
+  Registry registry;
+  prepare(registry);
+  apply(registry, {0xD4, 0x06, 0x03, 0x64, 0x8C, 0x8C, 0x60, 0xEF, 0x08, 0x2F, 0x13, 0x00, 0x00});
+  apply(registry, {0xC4, 0x08, 0x2F, 0x13, 0x82, 0x11, 0x04, 0x03, 0x02});
+  const Node *wht = registry.find(3);
+  CHECK(wht->is_detector());
+  CHECK(!wht->has_battery_report());
+  CHECK(!wht->has_fault_events_support());
+  CHECK(registry.find(14)->has_battery_report());
+  // C8 des WHT-630 trägt keine Spannung und bleibt ohne Wirkung.
+  apply(registry, {0xC8, 0x08, 0x2F, 0x13, 0x06, 0x00, 0x00, 0x00, 0x00, 0x03, 0x07});
+  CHECK(!registry.find(3)->has_battery);
+
+  Discovery discovery;
+  discovery.request(Discovery::Scope::Details);
+  CHECK_EQ(discovery.on_map(uint64_t{1} << 3, registry, OWN_SID), 1);
+  CHECK(expect_next(discovery, registry, 3, QUERY_REMOTE_STATUS));
+  discovery.on_result(3, QUERY_REMOTE_STATUS, Outcome::Ok);
+  CHECK(expect_next(discovery, registry, 3, QUERY_FAULT_DETAILS));
+  // Auch mit Fehlern kein C5: der WHT-630 beantwortet es nicht.
+  discovery.on_fault_details(3, 0x0004);
+  discovery.on_result(3, QUERY_FAULT_DETAILS, Outcome::Ok);
+  DiscoveryTask task;
+  CHECK(!discovery.next(registry, task));
+  CHECK(discovery.take_finished());
 }
 
 void test_identify_and_details() {
@@ -198,8 +287,7 @@ void test_identify_and_details() {
   CHECK(expect_next(discovery, registry, 3, QUERY_IDENTITY));
   apply(registry, {0xC4, 0x08, 0x2F, 0x13, 0x82, 0x11, 0x04, 0x03, 0x02});
   discovery.on_result(3, QUERY_IDENTITY, Outcome::Ok);
-  CHECK(expect_next(discovery, registry, 3, QUERY_BATTERY));
-  discovery.on_result(3, QUERY_BATTERY, Outcome::Ok);
+  // WHT-630: keine Batterieabfrage.
   CHECK(expect_next(discovery, registry, 3, QUERY_FAULT_DETAILS));
   discovery.on_result(3, QUERY_FAULT_DETAILS, Outcome::Ok);
 
@@ -293,7 +381,8 @@ void test_periodic() {
   Registry registry;
   prepare(registry);
   apply(registry, {0xD4, 0x06, 0x03, 0x64, 0x8C, 0x8C, 0x60, 0xEF, 0x08, 0x2F, 0x13, 0x00, 0x00});
-  apply(registry, {0xC4, 0x08, 0x2F, 0x13, 0x82, 0x11, 0x04, 0x03, 0x02});
+  // SID 3 als ST-630-DE, damit beide Knoten für die Batterie in Frage kommen.
+  apply(registry, {0xC4, 0x08, 0x2F, 0x13, 0x81, 0x7C, 0x04, 0x03, 0x02});
   Discovery discovery;
   const uint32_t status_ms = 19u * 3600u * 1000u;
   const uint32_t battery_ms = 24u * 3600u * 1000u;
@@ -358,6 +447,8 @@ void run_discovery_tests() {
   test_identify_known_device();
   test_identify_unreachable();
   test_details();
+  test_details_skip_unreachable();
+  test_wht_without_battery();
   test_identify_and_details();
   test_rm_without_detector();
   test_next_campaign_counts_last_sid();
