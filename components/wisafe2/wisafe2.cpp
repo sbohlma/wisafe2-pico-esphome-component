@@ -479,9 +479,8 @@ void WiSafe2Component::service_template_(uint32_t now) {
   }
   ESP_LOGI(TAG, "    # SID %u\n"
                 "    - sid: %u%s\n"
-                "      name: \"%s\"\n"
                 "      device: %s%s",
-           node->sid, node->sid, id_line, name, key, alarm_lines);
+           node->sid, node->sid, id_line, key, alarm_lines);
 }
 
 void WiSafe2Component::note_changes_(uint8_t sid, uint8_t changes) {
