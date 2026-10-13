@@ -4,6 +4,8 @@ from esphome.components import binary_sensor, button, event, sensor, text_sensor
 import esphome.config_validation as cv
 from esphome.const import (
     CONF_DEVICE,
+    CONF_DEVICES,
+    CONF_ESPHOME,
     CONF_ID,
     CONF_MODEL,
     CONF_NAME,
@@ -20,6 +22,8 @@ from esphome.const import (
     UNIT_MILLIVOLT,
     UNIT_VOLT,
 )
+from esphome.core import CORE
+import esphome.final_validate as fv
 
 AUTO_LOAD = ["binary_sensor", "button", "event", "network", "sensor", "text_sensor"]
 
@@ -249,7 +253,8 @@ def entity_option(value):
 DETECTOR_BASE_SCHEMA = cv.Schema(
     {
         cv.GenerateID(): cv.declare_id(Detector),
-        cv.Required(CONF_NAME): cv.string_strict,
+        # Mit device darf name fehlen; dann gilt der Name des Geräts aus esphome: devices.
+        cv.Optional(CONF_NAME): cv.string_strict,
         cv.Optional(CONF_SID): cv.int_range(min=0, max=63),
         cv.Optional(CONF_DEVICE_ID): detector_device_id,
         # Sub-Device aus esphome: devices; der Schlüssel device_id an den Entitäten bezeichnet es ebenfalls.
@@ -262,6 +267,8 @@ DETECTOR_BASE_SCHEMA = cv.Schema(
 def detector_schema(value):
     """Ergänzt Name und Sub-Device jeder Entität vor deren Prüfung, damit die Duplikatprüfung von ESPHome greift."""
     config = cv.All(DETECTOR_BASE_SCHEMA, cv.has_at_least_one_key(CONF_SID, CONF_DEVICE_ID))(value)
+    if CONF_NAME not in config and CONF_DEVICE not in config:
+        raise cv.Invalid("name fehlt; ohne device ist name nötig", path=[CONF_NAME])
     for key, (_, schema, default_name, _) in DETECTOR_ENTITIES.items():
         raw = config.get(key, {})
         if raw is False:
@@ -290,8 +297,30 @@ def unique_detectors(detectors):
                     f"{field} {value} steht schon bei \"{seen[value]}\"",
                     path=[index, field],
                 )
-            seen[value] = detector[CONF_NAME]
+            seen[value] = detector.get(CONF_NAME, detector.get(CONF_DEVICE))
     return detectors
+
+
+def device_names(full_config):
+    return {
+        device[CONF_ID].id: device[CONF_NAME]
+        for device in full_config.get(CONF_ESPHOME, {}).get(CONF_DEVICES, [])
+    }
+
+
+def final_validate(config):
+    names = device_names(fv.full_config.get())
+    for index, detector in enumerate(config[CONF_DETECTORS]):
+        device = detector.get(CONF_DEVICE)
+        if device is not None and device not in names:
+            raise cv.Invalid(
+                f"Gerät {device} fehlt unter esphome: devices",
+                path=[CONF_DETECTORS, index, CONF_DEVICE],
+            )
+    return config
+
+
+FINAL_VALIDATE_SCHEMA = final_validate
 
 
 CONFIG_SCHEMA = cv.Schema(
@@ -423,7 +452,8 @@ CONFIG_SCHEMA = cv.Schema(
 
 
 async def detector_to_code(parent, config):
-    det = cg.new_Pvariable(config[CONF_ID], config[CONF_NAME], config.get(CONF_SID, 0xFF))
+    name = config.get(CONF_NAME) or device_names(CORE.config)[config[CONF_DEVICE]]
+    det = cg.new_Pvariable(config[CONF_ID], name, config.get(CONF_SID, 0xFF))
     if CONF_DEVICE_ID in config:
         display = bytes.fromhex(config[CONF_DEVICE_ID])
         cg.add(det.set_device_id(display[2], display[1], display[0]))
