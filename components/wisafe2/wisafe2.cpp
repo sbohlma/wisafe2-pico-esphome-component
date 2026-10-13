@@ -320,6 +320,62 @@ void WiSafe2Component::refresh_detector(Detector *detector) {
   this->discovery_.want(node->sid, QUERY_DETAILS);
 }
 
+void WiSafe2Component::network_test() {
+  const uint32_t now = millis();
+  char text[120];
+  text[0] = '\0';
+  if (!this->identity_.valid) {
+    std::snprintf(text, sizeof(text), "Netztest: keine device_id in der YAML");
+  } else if (this->start_state_ != StartState::Running || this->init_pending_) {
+    std::snprintf(text, sizeof(text), "Netztest: Modul noch nicht bereit");
+  } else if (!this->paired_) {
+    std::snprintf(text, sizeof(text), "Netztest: RM ungekoppelt");
+  } else if (this->network_test_pending_) {
+    std::snprintf(text, sizeof(text), "Netztest: der vorige wartet noch auf das Senden");
+  } else if (this->network_test_used_ && now - this->network_test_ms_ < NETWORK_TEST_LOCK_MS) {
+    std::snprintf(text, sizeof(text), "Netztest: Sperrzeit, nächster in %u s möglich",
+                  static_cast<unsigned>((NETWORK_TEST_LOCK_MS - (now - this->network_test_ms_) + 999u) / 1000u));
+  }
+  if (text[0] != '\0') {
+    ESP_LOGW(TAG, "%s", text);
+    this->publish_last_reply_(text);
+    return;
+  }
+  uint8_t payload[HOST_REPLY_MAX];
+  const size_t len = build_network_test(this->identity_, payload, sizeof(payload));
+  if (len == 0 || !this->enqueue_(Request::remote(TAG_NETWORK_TEST, payload, len))) {
+    return;
+  }
+  this->network_test_pending_ = true;
+  this->network_test_used_ = true;
+  this->network_test_ms_ = now;
+  ESP_LOGI(TAG, "Netztest angefordert: 70 mit Klasse FF, alle Melder im Netz ertönen%s",
+           this->scheduler_.remote_open() ? "; startet nach der offenen Fernanfrage" : "");
+}
+
+void WiSafe2Component::report_network_test_(const Completion &completion) {
+  this->network_test_pending_ = false;
+  char text[120];
+  if (completion.outcome != Outcome::Ok) {
+    // Ohne Quittung gilt der Test als nicht ausgelöst; ein neuer Versuch ist sofort möglich.
+    this->network_test_used_ = false;
+    std::snprintf(text, sizeof(text), "Netztest: %s nach %u Sendeversuch(en)", outcome_name(completion.outcome),
+                  static_cast<unsigned>(completion.request.send_attempts));
+    ESP_LOGW(TAG, "%s", text);
+    this->publish_last_reply_(text);
+    return;
+  }
+  this->network_test_ms_ = millis();
+  ESP_LOGI(TAG, "Ereignis: Netztest von der Brücke ausgelöst, RM hat mit 46 quittiert");
+  this->publish_last_reply_("Netztest: quittiert (46)");
+  if (this->network_event_ != nullptr) {
+    this->network_event_->trigger("netztest");
+  }
+  if (this->last_event_sensor_ != nullptr) {
+    this->last_event_sensor_->publish_state("Netztest: von der Brücke ausgelöst, alle Melder ertönen");
+  }
+}
+
 void WiSafe2Component::assign_detectors_() {
   this->assign_needed_ = false;
   this->publish_all_ = true;
@@ -737,6 +793,9 @@ void WiSafe2Component::handle_completion_(const Completion &completion) {
       this->discovery_.on_result(request.node_sid, query, completion.outcome);
       break;
     }
+    case TAG_NETWORK_TEST:
+      this->report_network_test_(completion);
+      break;
     default:
       break;
   }
