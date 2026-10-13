@@ -38,6 +38,7 @@ WiSafe2RediscoverButton = wisafe2_ns.class_("WiSafe2RediscoverButton", button.Bu
 WiSafe2DetailsButton = wisafe2_ns.class_("WiSafe2DetailsButton", button.Button)
 WiSafe2RegistryLogButton = wisafe2_ns.class_("WiSafe2RegistryLogButton", button.Button)
 WiSafe2TemplateButton = wisafe2_ns.class_("WiSafe2TemplateButton", button.Button)
+WiSafe2NetworkTestButton = wisafe2_ns.class_("WiSafe2NetworkTestButton", button.Button)
 WiSafe2RefreshButton = wisafe2_ns.class_("WiSafe2RefreshButton", button.Button)
 Detector = wisafe2_ns.class_("Detector")
 QueryRemoteStatusAction = wisafe2_ns.class_("QueryRemoteStatusAction", automation.Action)
@@ -76,9 +77,12 @@ CONF_LAST_EVENT = "last_event"
 CONF_UNASSIGNED = "unassigned"
 CONF_NETWORK_EVENT = "network_event"
 CONF_TEMPLATE_BUTTON = "template_button"
+CONF_NETWORK_TEST_BUTTON = "network_test_button"
 
 # Wie event_type() in node_view.cpp.
 EVENT_TYPES = ["alarm", "alarm_ende", "stummschaltung", "test", "fehlerbericht"]
+# Das netzweite Ereignis meldet zusätzlich den Netztest der Brücke.
+NETWORK_EVENT_TYPES = EVENT_TYPES + ["netztest"]
 
 # WST-630, wie Arduino-Firmware und NikNakk; im Paket 11 03.
 DEFAULT_MODEL = 0x0311
@@ -418,6 +422,11 @@ CONFIG_SCHEMA = cv.Schema(
             entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
             icon="mdi:file-document-outline",
         ),
+        # E1: Mit diesem Eintrag ist der Netztest zugeschaltet; ohne ihn sendet die Brücke nie 70.
+        cv.Optional(CONF_NETWORK_TEST_BUTTON): button.button_schema(
+            WiSafe2NetworkTestButton,
+            icon="mdi:bullhorn-outline",
+        ),
         cv.Optional(CONF_NETWORK_ALARM): binary_sensor.binary_sensor_schema(
             device_class=DEVICE_CLASS_SMOKE,
         ),
@@ -449,6 +458,18 @@ CONFIG_SCHEMA = cv.Schema(
         ),
     }
 ).extend(cv.COMPONENT_SCHEMA)
+
+
+def network_test_needs_identity(config):
+    if CONF_NETWORK_TEST_BUTTON in config and CONF_DEVICE_ID not in config:
+        raise cv.Invalid(
+            "Der Netztest sendet die eigene Identität; dafür device_id angeben",
+            path=[CONF_NETWORK_TEST_BUTTON],
+        )
+    return config
+
+
+CONFIG_SCHEMA = cv.All(CONFIG_SCHEMA, network_test_needs_identity)
 
 
 async def detector_to_code(parent, config):
@@ -528,7 +549,7 @@ async def to_code(config):
             cg.add(setter(sens))
 
     if CONF_NETWORK_EVENT in config:
-        evt = await event.new_event(config[CONF_NETWORK_EVENT], event_types=EVENT_TYPES)
+        evt = await event.new_event(config[CONF_NETWORK_EVENT], event_types=NETWORK_EVENT_TYPES)
         cg.add(var.set_network_event(evt))
 
     for detector in config[CONF_DETECTORS]:
@@ -543,6 +564,7 @@ async def to_code(config):
         CONF_DETAILS_BUTTON,
         CONF_REGISTRY_LOG_BUTTON,
         CONF_TEMPLATE_BUTTON,
+        CONF_NETWORK_TEST_BUTTON,
     ):
         if key in config:
             btn = await button.new_button(config[key])
