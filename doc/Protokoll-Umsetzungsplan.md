@@ -310,8 +310,8 @@ Umsetzung im Detail:
 - Zeitangaben („zuletzt gesehen“ als Text-Sensor mit `device_class: timestamp`, Uhrzeit des letzten Tests) nutzen die Systemzeit, die eine `time`-Komponente stellt. Ohne gestellte Uhr bleiben sie leer bzw. ohne Uhrzeit.
 - Ereignisse: Je Melder und netzweit eine Event-Entität mit den Typen `alarm`, `alarm_ende`, `stummschaltung`, `test`, `fehlerbericht`. Sie folgen den Funknachrichten `50`, `51`, `61`, `70`, `71` nach dem Duplikatfilter. Der Text-Sensor „letztes Ereignis“ zeigt sie lesbar, etwa „Alarm: SID 14 (Flur), Rauch“.
 - Button „Status aktualisieren“ je Melder: Remote-Status, Batterie und Fehlerdetails über die Planung der Netzdetails, mit denselben Regeln (kein `C7` an den WHT-630, `C5` nur bei Fehlern).
-- YAML: `detectors` mit `sid` und/oder `device_id`, `name` und optional `device` (Sub-Device aus `esphome: devices`). Ohne `device` tragen die Entitäten den Meldernamen als Präfix. Jede Entität entsteht ohne Angabe, lässt sich anpassen oder mit `false` abwählen. Name und Sub-Device werden vor der Prüfung der Entitäten gesetzt, damit die Duplikatprüfung von ESPHome greift. Doppelte SIDs oder Geräte-IDs in `detectors` weist die Prüfung ab.
-- YAML-Vorlage: nach jeder Erkundung und per Button, nur für Knoten ohne Eintrag. Sie erscheint in kurzen Abständen als mehrere Logmeldungen, zuerst `esphome: devices`, dann `wisafe2: detectors`. Die Alarm-Entität bekommt `device_class: heat` bzw. `carbon_monoxide` nach der Klasse.
+- YAML: `detectors` mit `sid` und/oder `device_id`, `name` und optional `device` (Sub-Device aus `esphome: devices`). Mit `device` darf `name` fehlen, dann gilt der Name des Geräts. Ohne `device` ist `name` Pflicht, und die Entitäten tragen den Meldernamen als Präfix. Jede Entität entsteht ohne Angabe, lässt sich anpassen oder mit `false` abwählen. Name und Sub-Device werden vor der Prüfung der Entitäten gesetzt, damit die Duplikatprüfung von ESPHome greift. Doppelte SIDs oder Geräte-IDs in `detectors` weist die Prüfung ab.
+- YAML-Vorlage: nach jeder Erkundung und per Button, nur für Knoten ohne Eintrag. Sie erscheint in kurzen Abständen als mehrere Logmeldungen, zuerst `esphome: devices` mit den IDs `alarm_` plus Geräte-ID, dann `wisafe2: detectors` ohne `name`. Die Alarm-Entität bekommt `device_class: heat` bzw. `carbon_monoxide` nach der Klasse.
 - Speicher **[R6]**: 21 Melder mit allen Entitäten (313) und acht netzweiten Entitäten belegen 16 KB RAM und 27 KB Flash mehr als ohne Melder; die Firmware nutzt damit 103 KB von 512 KB RAM.
 
 Abnahme:
@@ -338,6 +338,7 @@ Erste Hardware-Prüfung am 13.10.2026 (Log über die native API, 08:10–08:35, 
 - Kopfzeilen der YAML-Vorlage als YAML-Kommentar (`# SID 14`, `# YAML-Vorlage, Fortsetzung`). Ohne Zeitstempel und Präfix ist die Vorlage gültiges YAML; die README nennt einen regulären Ausdruck zum Entfernen.
 - Nachrichten mit der Gateway-ID legen für eine SID ohne Platz keinen Eintrag an (P8, P18). „letztes Ereignis“ nennt bei der Gateway-ID ohne Meldernamen `(Gateway)`, etwa „Test bestanden: SID 15 (Gateway)“.
 - README: Hinweise zum ersten Ereignis im Log-Client und zur Warnung beim Speichern.
+- `name` unter `detectors` ist mit `device` optional, die Brücke übernimmt dann den Namen aus `esphome: devices`. Die Vorlage nennt die Geräte `alarm_2FE43D` usw. und lässt `name` unter `detectors` weg.
 
 ### Stufe 4: Diagnose und Netztest
 
