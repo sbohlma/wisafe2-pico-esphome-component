@@ -1,6 +1,6 @@
 # Umsetzungsplan: W2-Modulprotokoll auf der Pico-2-W-Brücke
 
-Stand: 12.10.2026, Entscheidungen E1–E12 getroffen, E3 und E7 überarbeitet, Stufe 0 umgesetzt und auf der Hardware abgenommen, Init-Sequenz korrigiert (Abschnitt 9), Stufe 1 bis auf die Testtaste abgenommen, Stufe 2 umgesetzt, nach der ersten Hardware-Prüfung überarbeitet (Zeitlimit, Erkundung und Netzdetails getrennt). Grundlage ist [PROTOCOL_ANALYSIS_W2_MODULE.md](https://github.com/sbohlma/FireAngel/blob/main/wisafe-mm/docs/PROTOCOL_ANALYSIS_W2_MODULE.md) (im Folgenden „Protokollanalyse“) mit den dort genannten Quellen, vor allem NikNakks [fireangel-pro-connected-esphome](https://github.com/NikNakk/fireangel-pro-connected-esphome), Tho85s [ws2mqtt](https://github.com/Tho85/ws2mqtt) und [wisafe-mm](https://github.com/sbohlma/FireAngel/tree/main/wisafe-mm).
+Stand: 13.10.2026, Entscheidungen E1–E12 getroffen, E3 und E7 überarbeitet, Stufe 0 umgesetzt und auf der Hardware abgenommen, Init-Sequenz korrigiert (Abschnitt 9), Stufe 1 bis auf die Testtaste abgenommen, Stufe 2 umgesetzt, nach der ersten Hardware-Prüfung überarbeitet (Zeitlimit, Erkundung und Netzdetails getrennt). Grundlage ist [PROTOCOL_ANALYSIS_W2_MODULE.md](https://github.com/sbohlma/FireAngel/blob/main/wisafe-mm/docs/PROTOCOL_ANALYSIS_W2_MODULE.md) (im Folgenden „Protokollanalyse“) mit den dort genannten Quellen, vor allem NikNakks [fireangel-pro-connected-esphome](https://github.com/NikNakk/fireangel-pro-connected-esphome), Tho85s [ws2mqtt](https://github.com/Tho85/ws2mqtt) und [wisafe-mm](https://github.com/sbohlma/FireAngel/tree/main/wisafe-mm).
 
 Ziel: Alle Melder im Netz erscheinen in ESPHome und Home Assistant mit Zustand, Fehlern, Batterie und Ereignissen. Diagnose und Netztest stehen als Funktionen bereit.
 
@@ -156,7 +156,7 @@ Abgefragt wird in zwei getrennten Abläufen, beide beginnend mit `D3 03` (Liste 
 
 Bleibt `D3 06 sid 00` ohne Antwort, entfallen die übrigen Schritte dieser SID.
 
-Dauer: Die Antworten kamen im eigenen Netz nach 4 s bis über 3 min (P10). Die Erkundung braucht je Melder meist unter einer Minute (`C4` nach 9–34 s), jede SID ohne Antwort kostet das volle Zeitlimit. Die Netzdetails brauchen für 22 Knoten eher 30–60 min, weil `73` und `C6` oft erst nach 30–100 s kommen.
+Dauer: Die Antworten kamen im eigenen Netz nach 4 s bis über 3 min (P10). Die Erkundung braucht je Melder meist unter einer Minute (`C4` nach 9–34 s), jede SID ohne Antwort kostet das volle Zeitlimit. Die Netzdetails brauchen für 21 SIDs rund eine Stunde, je Melder 1,5 bis 4 min, weil der erste Kontakt bis knapp 3 min und `C6` oft 30–130 s dauert (P16).
 
 Wann erkundet wird **[E5]**, gesteuert über die YAML-Option `auto_discovery`:
 
@@ -241,6 +241,12 @@ Abnahme:
 - „Rediscover Network“ löscht Register und Datei und baut beides neu auf.
 - Bei den Schreibvorgängen prüfen, ob Rahmen verloren gehen (Rahmenfehler im Log, Lücken in den Folgenummern) **[R5]**.
 
+Zweite Prüfung auf der Hardware (Log vom 13.10.2026, 02:12–02:35, Netzdetails noch laufend):
+
+- Start mit `nodes.bin` (21 Knoten): Die Erkundung nahm nur SID 16 und endete nach 48 s mit `D4 01` als „nicht erreichbar“. „Discover Network“ um 02:17 lief ebenso, 44 s. Kein Schreibvorgang, weil sich keine Kennung änderte.
+- „Netzdetails“ um 02:19: SID 0 bis 5 in 15,5 min. Alle Antworten kamen innerhalb von 180 s, die längste nach 175,7 s (P16). Keine Sperrphase „Modul taktet nicht“, keine Warnung außer SID 16.
+- Der WHT-630 an SID 3 meldet in `C8` erneut 0 mV (P13). Die Brücke zeigt „Batterie 0 mV“.
+
 ### Stufe 3: Melder als Geräte in Home Assistant
 
 Ziel: Jeder Melder erscheint mit eigenen Entitäten über die native API **[E6]**.
@@ -324,7 +330,7 @@ Getroffen am 11.10.2026.
 | E5 | Wie oft werden Melder aus der Ferne abgefragt? | Zielbetrieb: Erkundung beim Start, `D3 06` je SID alle 19 h, `C7` je Melder alle 24 h, ereignisgesteuerte Abfragen. In Entwicklung und Test nur beim Start und auf Knopfdruck. Umschaltung über YAML `auto_discovery`. Nachtrag 12.10.2026: Die Erkundung beim Start ermittelt nur die Kennung (Geräte-ID, Klasse, Modell). Batterie, Fehler und RM-Werte kommen über den getrennten Ablauf „Netzdetails“ auf Knopfdruck und über die periodischen Abfragen |
 | E6 | Wie werden die Melder zu Entitäten? | Melder in der YAML auflisten, Vorlage aus dem Log, dazu das Register als JSON-Text-Sensor. Alles über die native API |
 | E7 | Melderregister speichern? | Ja, als Binärdatei `nodes.bin` mit festen 50 Plätzen (408 Byte), nur bei Änderung, gebündelt. Button „Rediscover Network“ löscht das Register und erkundet neu |
-| E8 | Wann gilt ein Knoten als nicht erreichbar? | Nach `D4 01` oder zwei ausbleibenden Antworten in Folge. Entfernen nur über „Rediscover Network“. Nachtrag 12.10.2026: `D4 01` kam im eigenen Netz bisher nie (P12), es zählen die ausbleibenden Antworten mit dem Zeitlimit `remote_timeout` |
+| E8 | Wann gilt ein Knoten als nicht erreichbar? | Nach `D4 01` oder zwei ausbleibenden Antworten in Folge. Entfernen nur über „Rediscover Network“. Nachtrag 13.10.2026: `D4 01` kommt bei nur einer offenen Anfrage nach 44–48 s und beendet das Warten sofort (P12). Ohne `D4 01` zählt das Ausbleiben der Antwort innerhalb von `remote_timeout` |
 | E9 | Unbekannter Rahmen `D4 10 BF 7F 0E 05 00 00 00 00 14`? | Weiter mitschneiden, roh loggen, Auswertung erst bei geklärter Bedeutung. Nachtrag 12.10.2026: Format und wahrscheinliche Bedeutung in P2 und P3. Die Brücke nutzt `D4 10` als Bereitschaftssignal nach dem Init (P1). Ab Stufe 1 wird `D4 10` lesbar geloggt, etwa „Init-Antworten: 20 Knoten (…), eigene SID 20“. Ins Register geht es vorerst nicht ein |
 | E10 | Netzverändernde Befehle? | Vorerst ausgeschlossen. Ein Pairing-Assistent ist als Stufe 5 vorgemerkt |
 | E11 | Beim Senden maskieren? | Ja. Bei SIDs oder IDs mit `7D`/`7E` wird gezielt geprüft |
@@ -392,10 +398,11 @@ Mitschnitte im eigenen Netz, verglichen mit `D4 03 FF 7F 1F 05 00 00 00 00` (22 
 | 3, 12.10.2026 01:33 | `FF 7F 0E 05 00 00 00 00` | 20 | 16, 20 |
 | 4, 12.10.2026 01:46 | `FD 7F 0E 05 00 00 00 00` | 19 | 1, 16, 20 |
 | 5, 12.10.2026 03:40 | `FF 7F 0E 05 00 00 00 00` | 20 | 16, 20 |
+| 6, 13.10.2026 02:13 | `FF 6D 0E 05 00 00 00 00` | 18 | 9, 12, 16, 20 |
 
 - SID 20 ist das eigene Modul.
 - SID 16 ist ein Knoten ohne Batterie, der zum Netz gehört. Er fehlt in jedem Mitschnitt.
-- SID 6 und SID 1 fehlen je einmal. Einzelne Antworten gehen in einer Runde also verloren. `D4 10` ist damit eine Momentaufnahme und taugt allein nicht als Nachweis, dass ein Knoten fehlt.
+- SID 6 und SID 1 fehlen je einmal, SID 9 und SID 12 einmal gemeinsam. Einzelne Antworten gehen in einer Runde also verloren. `D4 10` ist damit eine Momentaufnahme und taugt allein nicht als Nachweis, dass ein Knoten fehlt.
 - Gegenprobe: Batterie in SID 16 einsetzen und prüfen, ob SID 16 danach in `D4 10` erscheint.
 
 ### P4: `D4 03` zeigt die Mitgliedschaft
@@ -487,7 +494,7 @@ Beobachtung vom 12.10.2026, Log über die native API, 07:58–10:12, zwei Erkund
 - Startet nach dem Zeitlimit die nächste Anfrage, kommen die Antworten gebündelt: etwa `D4 06` von SID 9 nach 140 s, drei Sekunden vor der Antwort von SID 11, die zwei Anfragen später gesendet wurde. `C6` von SID 4 kam nach 219 s, während drei weitere Remote-Status-Anfragen liefen. Vermutet: Das Netz arbeitet Fernanfragen nacheinander ab, eine neue Anfrage verlängert die Laufzeit der offenen.
 - Einige Antworten kamen nie, etwa `73` von SID 7 und SID 26 und der Remote-Status von SID 10, jeweils nachdem die Brücke nach 55 s die nächste Anfrage gesendet hatte.
 - `73` und `C6` brauchen meist deutlich länger als `C4` und `C8`.
-- Folgerung für einen Host: auf jede Antwort warten, Zeitlimit deutlich über 100 s. Die Brücke nutzt 180 s.
+- Folgerung für einen Host: auf jede Antwort warten, Zeitlimit deutlich über 100 s. Die Brücke nutzt 180 s. Messungen mit nur einer offenen Anfrage stehen in P16.
 
 ### P11: Das Modul nimmt während laufender Fernanfragen zeitweise keine Bytes an
 
@@ -497,13 +504,16 @@ Beobachtung vom 12.10.2026, viermal im Log, vermutet.
 - Jedes Mal war mindestens eine frühere Fernanfrage nach dem Zeitlimit der Brücke noch im Netz unterwegs, ihre Antwort kam später oder nie. Die Sperre trat nur auf, solange solche Anfragen offen waren.
 - Folgerung für einen Host: nicht angenommene Befehle bis etwa eine Minute lang wiederholen. Die Brücke tut das seit der Überarbeitung von Stufe 2.
 
-### P12: `D4 01` bleibt bei nicht antwortenden SIDs aus
+### P12: `D4 01` meldet eine nicht erreichbare SID nach 44–48 s
 
-Beobachtung vom 12.10.2026.
+Bestätigt am 13.10.2026, Gegenprobe zum Befund vom 12.10.2026.
 
-- In gut zwei Stunden Log kam kein einziges `D4 01`, obwohl SID 16 (ohne Batterie) und SID 5, 6 und 10 auf `D3 06 sid 00` nie antworteten.
-- Die Protokollanalyse nennt `D4 01` nach etwa 45 s. Im eigenen Netz mit RM-Firmware `EF` ist ein Knoten nur über das Ausbleiben der Antwort als nicht erreichbar zu erkennen.
-- Gegenprobe: `D3 06 10 00` an SID 16 senden und 10 min lang ohne weitere Anfrage beobachten.
+- Am 12.10.2026 kam in gut zwei Stunden Log kein `D4 01`, obwohl SID 16 (ohne Batterie) und SID 5, 6 und 10 auf `D3 06 sid 00` innerhalb von 55 s nie antworteten. Damals liefen meist mehrere Fernanfragen gleichzeitig (P10).
+- Am 13.10.2026 lief jeweils nur eine Anfrage. `D3 06 10 00` an SID 16 ergab zweimal `D4 01 00 00 00 01 00 00 00 00 00`, nach 47,4 s und nach 44,1 s. Das Format entspricht der Protokollanalyse: d2 Grund (`00`), d3–d10 SID-Bitkarte, hier Byte 2 Bit 0 = SID 16.
+- SID 5 antwortete am 13.10.2026 nach 175,7 s. Ihr Schweigen am 12.10.2026 lag also am Zeitlimit von 55 s.
+- Bis zu einer Antwort nach 176 s kam für SID 4 und SID 5 kein `D4 01`. Vermutet: Das RM erzeugt `D4 01` selbst, wenn es das Ziel im Netz gar nicht findet. Bei einem erreichbaren Ziel wartet es mindestens 176 s und meldet in dieser Zeit kein `D4 01`. Dazu passt das Zeitraster in P17.
+- Vermutet: Überlappende Anfragen unterdrücken `D4 01`.
+- Folgerung für einen Host: `D4 01` beendet das Warten auf die genannte SID. Fehlt es, kann die Antwort noch nach drei Minuten kommen.
 
 ### P13: Der WHT-630 liefert in `C8` keine Batteriespannung
 
@@ -513,8 +523,9 @@ Beobachtung vom 12.10.2026, SID 3, WHT-630, Gerät 132F08, vermutet.
 | --- | --- | --- |
 | 08:04:34 | `C8 08 2F 13 06 11 04 00 00` | `11 04`, gleich der Modell-ID |
 | 10:09:55 | `C8 08 2F 13 06 00 00 00 00` | `00 00` |
+| 13.10.2026 02:26:59 | `C8 08 2F 13 06 00 00 00 00 03 07` | `00 00` |
 
-- Die ST-630-DE melden plausible Werte von 2945 bis 3039 mV. Der WHT-630 meldet einmal seine Modell-ID und einmal 0.
+- Die ST-630-DE melden plausible Werte von 2945 bis 3039 mV. Der WHT-630 meldet einmal seine Modell-ID und zweimal 0.
 - Vermutet: Der WHT-630 misst in `C8` keine Spannung, die Felder sind unbelegt. Bis zur Klärung zeigt die Brücke den Wert unverändert; in Stufe 3 sollte die Batterie-Entität des WHT-630 entfallen oder als unbekannt gelten.
 - Gegenprobe: `C7` an weitere WHT-630, Vergleich mit der Anzeige im W2-MM.
 
@@ -534,3 +545,33 @@ Beobachtung vom 12.10.2026.
 - SID 1 und SID 12 melden in `D4 06` die Firmware `DF`, alle anderen `EF`. Beide haben BVNL `46` (2953 mV) und einen BVWL-Wert um `5A`–`5E`, deutlich unter dem der übrigen RMs (`8C`–`C4`).
 - SID 1 beantwortet `C3` nicht und gilt als RM ohne Melder. SID 12 ist noch nicht abgefragt.
 - Vermutet: eine ältere RM-Generation oder ein anderer Gerätetyp, etwa ein netzbetriebenes Modul. Offen.
+
+### P16: Laufzeiten mit genau einer offenen Fernanfrage
+
+Beobachtung vom 13.10.2026, Log über die native API, 02:13–02:35, Netzdetails für SID 0 bis 5, Zeitlimit 180 s, immer nur eine Anfrage im Netz.
+
+| SID, Gerät | `D3 06` → `D4 06` | `C7` → `C8` | `72` → `73` | `C5` → `C6` | Dauer je SID |
+| --- | --- | --- | --- | --- | --- |
+| 0, ST-630-DE | 2,8 s | 25,5 s | 6,7 s | 118,6 s | 156 s |
+| 1, RM ohne Melder | 40,1 s | – | – | – | 40 s |
+| 2, ST-630-DE | 25,0 s | 31,7 s | 38,3 s | 126,9 s | 223 s |
+| 3, WHT-630 | 27,6 s | 21,5 s | 42,3 s | – | 93 s |
+| 4, ST-630-DE | 167,3 s | 10,2 s | 15,4 s | 32,1 s | 226 s |
+| 5, ST-630-DE | 175,7 s | 8,8 s | offen | offen | über 197 s |
+
+- Alle Antworten kamen, keine überschritt das Zeitlimit. Die längste lag mit 175,7 s nur 4 s darunter.
+- Der Remote-Status als erster Kontakt streut von 3 s bis 176 s. Die Anfragen direkt danach an dasselbe Ziel kommen meist in 7–42 s zurück, auch nach einem sehr langsamen ersten Kontakt (SID 4 und SID 5). Vermutet: Das Ziel-RM wacht nur in Abständen auf und bleibt nach einem Kontakt eine Weile wach. Die Bündelung aller Anfragen je SID ist damit günstig.
+- `C6` braucht mit 32–127 s am längsten, wie schon in P10.
+- Ein Melder kostet mit vier Anfragen etwa 1,5 bis 4 min. Eine Runde über 21 SIDs dauert damit rund eine Stunde.
+- Folgenummern: SID 2 liefert 1, 2, 3 und SID 4 liefert 12, 13, 14 ohne Lücke direkt nach dem Remote-Status. SID 0 springt von 4 auf 6, SID 3 von 7 auf 9, jeweils zwischen zwei Melderantworten. Die Vermutung aus P9, der Remote-Status verbrauche Folgenummern, trägt damit allein nicht.
+- Um 02:15:39 kam ein `D4 06` von SID 0, ohne dass die Brücke eine Anfrage an SID 0 offen hatte. Offen stand nur `D3 06 10 00` an SID 16, das schon mit `D4 01` beendet war. Herkunft offen, vermutlich eine Anfrage aus der Zeit vor dem Neustart der Brücke um 02:12. Die Brücke hat den Wert passiv ins Register übernommen.
+
+### P17: Fernantworten kommen in einem 500-ms-Raster
+
+Beobachtung vom 13.10.2026, vermutet.
+
+- Die Empfangszeiten von 18 der 19 Fernantworten (`D4 06`, `C8`, `73`, `C6`) im Log vom 13.10.2026 liegen modulo 0,5 s auf einer gemeinsamen Phase. Sie wandert gleichmäßig von 0,427 s (02:19:39) bis 0,527 s (02:34:33), also um 0,1 s in 15 min, etwa 110 ppm Gangunterschied zwischen Modul und Pico. Auch `D4 10` um 02:13:00,881 liegt auf diesem Raster.
+- Die beiden `D4 01` (Phase 0,240 und 0,022) und der Remote-Status von SID 0 nach 2,8 s (0,226) liegen außerhalb.
+- Die eigenen Sendungen der Brücke fallen auf beliebige Zeitpunkte, denn das Modul taktet auf Anforderung über IRQ.
+- Vermutet: Das Funknetz arbeitet mit Zeitschlitzen von 500 ms, und das Modul reicht Funkrahmen im Takt dieser Schlitze an den Host weiter. `D4 01` erzeugt das RM lokal, unabhängig vom Raster (P12).
+- Gegenprobe: dieselbe Auswertung an einem längeren Log mit mehr Antworten.
