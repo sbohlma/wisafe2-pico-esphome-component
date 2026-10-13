@@ -1,6 +1,6 @@
 # Umsetzungsplan: W2-Modulprotokoll auf der Pico-2-W-Brücke
 
-Stand: 13.10.2026, Entscheidungen E1–E12 getroffen, E3 und E7 überarbeitet, Stufe 0 umgesetzt und auf der Hardware abgenommen, Init-Sequenz korrigiert (Abschnitt 9), Stufe 1 bis auf die Testtaste abgenommen, Stufe 2 umgesetzt, nach der ersten Hardware-Prüfung überarbeitet (Zeitlimit, Erkundung und Netzdetails getrennt). Grundlage ist [PROTOCOL_ANALYSIS_W2_MODULE.md](https://github.com/sbohlma/FireAngel/blob/main/wisafe-mm/docs/PROTOCOL_ANALYSIS_W2_MODULE.md) (im Folgenden „Protokollanalyse“) mit den dort genannten Quellen, vor allem NikNakks [fireangel-pro-connected-esphome](https://github.com/NikNakk/fireangel-pro-connected-esphome), Tho85s [ws2mqtt](https://github.com/Tho85/ws2mqtt) und [wisafe-mm](https://github.com/sbohlma/FireAngel/tree/main/wisafe-mm).
+Stand: 13.10.2026, Entscheidungen E1–E12 getroffen, E3 und E7 überarbeitet, Stufe 0 umgesetzt und auf der Hardware abgenommen, Init-Sequenz korrigiert (Abschnitt 9), Stufe 1 bis auf die Testtaste abgenommen, Stufe 2 umgesetzt, nach der ersten Hardware-Prüfung überarbeitet (Zeitlimit, Erkundung und Netzdetails getrennt) und nach der zweiten nachgeschärft (Zeitlimit 240 s, Abfragen je Modell und Erreichbarkeit), Stufe 3 umgesetzt. Grundlage ist [PROTOCOL_ANALYSIS_W2_MODULE.md](https://github.com/sbohlma/FireAngel/blob/main/wisafe-mm/docs/PROTOCOL_ANALYSIS_W2_MODULE.md) (im Folgenden „Protokollanalyse“) mit den dort genannten Quellen, vor allem NikNakks [fireangel-pro-connected-esphome](https://github.com/NikNakk/fireangel-pro-connected-esphome), Tho85s [ws2mqtt](https://github.com/Tho85/ws2mqtt) und [wisafe-mm](https://github.com/sbohlma/FireAngel/tree/main/wisafe-mm).
 
 Ziel: Alle Melder im Netz erscheinen in ESPHome und Home Assistant mit Zustand, Fehlern, Batterie und Ereignissen. Diagnose und Netztest stehen als Funktionen bereit.
 
@@ -50,7 +50,7 @@ Die Sendeplanung kennt drei Klassen von Befehlen:
 | --- | --- | --- |
 | Hostantwort | `91` auf `41`, `C4` auf `C3`, `73`/`C8`/`C6`/`C2` | sofort, vor allem anderen |
 | Lokal | `D1`, `D3 03` | Antwort nach ~70 ms ohne `46`, Zeitlimit 500 ms |
-| Fernanfrage | `D3 06 sid 00/01`, `72`, `C7`, `C5`, `C1`, `70` | `46` binnen 150 ms (bei `47`: SID unbekannt), Antwort asynchron nach 4 s bis über 3 min (P10), Zeitlimit per YAML, Vorgabe 180 s, nur eine gleichzeitig |
+| Fernanfrage | `D3 06 sid 00/01`, `72`, `C7`, `C5`, `C1`, `70` | `46` binnen 150 ms (bei `47`: SID unbekannt), Antwort asynchron nach 3 s bis knapp 3 min (P10, P16), Zeitlimit per YAML, Vorgabe 240 s, nur eine gleichzeitig |
 
 ## 3. Implementierungsstufen
 
@@ -126,7 +126,7 @@ Abnahme (Stand 12.10.2026, Logs 02:48–03:02 und 03:39–04:30):
 
 ### Stufe 2: Melderregister und Netzerkundung
 
-Stand: im Code umgesetzt (`registry`, `discovery`, `node_store`, Buttons in `buttons.h`, Host-Tests `test_registry.cpp` und `test_discovery.cpp`, 671 Prüfungen). Nach der ersten Prüfung auf der Hardware am 12.10.2026 überarbeitet: Zeitlimit für Fernantworten 180 s und per YAML einstellbar, Erkundung und Netzdetails als getrennte Abläufe (siehe „Überarbeitung nach der ersten Hardware-Prüfung“). Die weitere Abnahme folgt.
+Stand: im Code umgesetzt (`registry`, `discovery`, `node_store`, Buttons in `buttons.h`, Host-Tests `test_registry.cpp` und `test_discovery.cpp`). Nach der ersten Prüfung auf der Hardware am 12.10.2026 überarbeitet: Zeitlimit für Fernantworten per YAML einstellbar, Erkundung und Netzdetails als getrennte Abläufe (siehe „Überarbeitung nach der ersten Hardware-Prüfung“). Nach der zweiten Prüfung am 13.10.2026 nachgeschärft: Zeitlimit 240 s, kein `C7` an den WHT-630, unerreichbare SIDs nur in der Erkundung, `C5` nur bei gemeldeten Fehlern (siehe „Überarbeitung nach der zweiten Hardware-Prüfung“). Die weitere Abnahme folgt.
 
 Ziel: Die Brücke kennt alle Knoten des Netzes und hält deren Zustand aktuell.
 
@@ -151,10 +151,10 @@ Abgefragt wird in zwei getrennten Abläufen, beide beginnend mit `D3 03` (Liste 
 
 | Ablauf | Zweck | Abfragen je SID |
 | --- | --- | --- |
-| Erkundung | Kennung für `nodes.bin`: Geräte-ID, Klasse, Modell. Ändert sich nur beim Tausch eines Melders | `D3 06 sid 00` nur ohne bekannte Geräte-ID, danach `D3 06 sid 01` (`C4`) nur ohne bekannte Klasse. RMs ohne Melder beantworten `C4` nicht und bleiben „Typ unbekannt“ |
-| Netzdetails | Werte, die sich ändern | `D3 06 sid 00` an jede SID (RM-Batterie, RSSI, Erreichbarkeit), dann `C7` (Batterie) und `72` (Fehlerdetails) an jeden erreichbaren Melder, `C5` nur an WST-630 und ST-630-DE |
+| Erkundung | Kennung für `nodes.bin`: Geräte-ID, Klasse, Modell. Ändert sich nur beim Tausch eines Melders. Dazu die Erreichbarkeit der als unerreichbar geführten SIDs | `D3 06 sid 00` ohne bekannte Geräte-ID und an jede unerreichbare SID, danach `D3 06 sid 01` (`C4`) nur ohne bekannte Klasse. RMs ohne Melder beantworten `C4` nicht und bleiben „Typ unbekannt“ |
+| Netzdetails | Werte, die sich ändern | `D3 06 sid 00` an jede erreichbare SID (RM-Batterie, RSSI), dann `C7` (Batterie, ohne WHT-630, P13) und `72` (Fehlerdetails) an jeden Melder. `C5` nur, wenn `73` Fehler meldet, und nur an WST-630 und ST-630-DE |
 
-Bleibt `D3 06 sid 00` ohne Antwort, entfallen die übrigen Schritte dieser SID.
+Bleibt `D3 06 sid 00` ohne Antwort, entfallen die übrigen Schritte dieser SID. Unerreichbare SIDs überspringen die Netzdetails, bis sie in einer Erkundung wieder antworten. Laufen Erkundung und Netzdetails gemeinsam, bekommt eine SID, die in der Erkundung antwortet, gleich die Netzdetails.
 
 Dauer: Die Antworten kamen im eigenen Netz nach 4 s bis über 3 min (P10). Die Erkundung braucht je Melder meist unter einer Minute (`C4` nach 9–34 s), jede SID ohne Antwort kostet das volle Zeitlimit. Die Netzdetails brauchen für 21 SIDs rund eine Stunde, je Melder 1,5 bis 4 min, weil der erste Kontakt bis knapp 3 min und `C6` oft 30–130 s dauert (P16).
 
@@ -166,7 +166,7 @@ Wann erkundet wird **[E5]**, gesteuert über die YAML-Option `auto_discovery`:
 | Button „Discover Network“ | Erkundung der SIDs ohne vollständigen Eintrag, Register bleibt erhalten | wie links |
 | Button „Netzdetails“ | Netzdetails aller SIDs | wie links |
 | Periodisch | keine Abfragen | `D3 06` je SID alle 19 h, `C7` je Melder alle 24 h, über den Tag verteilt, Intervalle per YAML |
-| Ereignisgesteuert | keine Abfragen | nach `71` mit Flag 0x02: `72` und `C5`; nach `D4 04` oder `D4 09` mit unbekannter SID: Erkundung dieser SIDs |
+| Ereignisgesteuert | keine Abfragen | nach `71` mit Flag 0x02: `72`, und `C5`, wenn `73` Fehler meldet; nach `D4 04` oder `D4 09` mit unbekannter SID: Erkundung dieser SIDs |
 
 Passive Nachrichten aktualisieren das Register in beiden Betriebsarten sofort: `70`, `71`, `50`, `51`, `61`, `D2`, `D4 04`, `D4 09`, sowie Kopien von `C4`, `73`, `C6`, `C8` nach dem Init.
 
@@ -210,13 +210,13 @@ Umsetzung im Detail:
   - `D4 09` mit SID 0 und der Gateway-ID `01 02 03` wird übergangen, eine Gateway-ID an einer echten SID setzt das Flag „Gateway-RM“.
   - `D2` und `D4 10` liefern die eigene SID. Das eigene RM bekommt das Flag „eigenes RM“ (Bit 2) und die Identität aus der YAML und wird nie abgefragt.
 - Erreichbarkeit **[E8]**: Jede Nachricht der SID und jede Antwort setzt „erreichbar“ und den Zähler zurück. `D4 01` setzt sofort „nicht erreichbar“, sonst nach zwei Zeitüberschreitungen in Folge. Bleibt nur `C4` aus, zählt das nicht: Das Register setzt dann „Typ unbekannt“.
-- `discovery` plant die Abfragen je SID in der Reihenfolge Remote-Status, ID-Information, Batterie, Fehlerdetails, Fehlerereignisse. Vor jeder Abfrage wird erneut geprüft, ob sie nötig ist: Remote-Status der Erkundung nur ohne Geräte-ID, ID-Information nur ohne Klasse und nie an ein RM ohne Melder, `C7` und `72` nur für Melder, `C5` nur für WST-630 und ST-630-DE, Gerätefragen nicht an unerreichbare Knoten. `D3 06 sid 00` läuft je SID höchstens einmal, auch wenn Erkundung und Netzdetails gemeinsam anstehen. Scheitert der Remote-Status oder lehnt das RM mit `47` ab, entfallen die übrigen Schritte dieser SID.
+- `discovery` plant die Abfragen je SID in der Reihenfolge Remote-Status, ID-Information, Batterie, Fehlerdetails, Fehlerereignisse. Vor jeder Abfrage wird erneut geprüft, ob sie nötig ist: Remote-Status der Erkundung nur ohne Geräte-ID oder bei unerreichbarer SID, ID-Information nur ohne Klasse und nie an ein RM ohne Melder, `C7` nur für Melder außer dem WHT-630, `72` nur für Melder, `C5` nur für WST-630 und ST-630-DE und nur nach einem `73` mit FS ungleich 0 zur eigenen Abfrage, Gerätefragen nicht an unerreichbare Knoten. `D3 06 sid 00` läuft je SID höchstens einmal, auch wenn Erkundung und Netzdetails gemeinsam anstehen. Scheitert der Remote-Status oder lehnt das RM mit `47` ab, entfallen die übrigen Schritte dieser SID.
 - Beide Abläufe beginnen mit `D3 03`. Die Erkundung (Start, „Discover Network“, „Rediscover Network“, neue SIDs aus `D4 04`/`D4 09`) nimmt nur SIDs ohne vollständigen Eintrag, die Netzdetails alle SIDs der Karte außer der eigenen. Vollständig heißt: Geräte-ID und Klasse bekannt, oder Gateway-RM, oder Typ unbekannt. Das Log zählt mit („Erkundung SID 3 (2/21): ID-Information“, „Netzdetails SID 3 (2/21): Batterie“) und gibt am Ende Dauer und Register aus.
 - Periodik (nur `auto_discovery: true`): erste Runde 15 min nach dem Start, danach reihum je ein Knoten im Abstand Intervall geteilt durch die Zahl passender Knoten. Remote-Status gilt allen Netzmitgliedern außer dem eigenen RM, also auch unerreichbaren, damit sie wieder als erreichbar erkannt werden. Batterie gilt nur erreichbaren Meldern. Während einer Erkundung pausiert die Periodik.
 - Erkundung und Periodik laufen über denselben Scheduler wie die Handabfragen: eine offene Fernanfrage, Hostantworten mit Vorrang. Eine neue Abfrage startet erst, wenn der Scheduler leer ist.
 - `node_store` (nur Gerät) nutzt LittleFS von arduino-pico im Dateisystembereich, den ESPHome für den RP2350 reserviert (1 MB). Geschrieben wird `/nodes.tmp` und dann in `/nodes.bin` umbenannt, damit ein Stromausfall die alte Datei erhält. ESPHome-Preferences scheiden aus, sie fassen nur 512 Byte.
 - Schreibzeitpunkt **[R5]**: frühestens 5 s nach der ersten Änderung, nur ohne halben Rahmen, ohne laufenden Sendevorgang und mindestens 1 s nach dem letzten Rahmen. Bei offener Fernanfrage wartet die Brücke bis zu 60 s. Das Log nennt Dauer und belegte Plätze jedes Schreibvorgangs.
-- Neue YAML-Optionen: `auto_discovery` (Vorgabe `false`), `remote_status_interval` (Vorgabe 19 h), `battery_interval` (Vorgabe 24 h), jeweils 10 min bis 20 Tage, `remote_timeout` (Vorgabe 180 s, 30 s bis 10 min). Buttons `discover_button`, `rediscover_button`, `details_button`, `registry_log_button` (gibt das Register ins Log aus).
+- Neue YAML-Optionen: `auto_discovery` (Vorgabe `false`), `remote_status_interval` (Vorgabe 19 h), `battery_interval` (Vorgabe 24 h), jeweils 10 min bis 20 Tage, `remote_timeout` (Vorgabe 240 s, 30 s bis 10 min). Buttons `discover_button`, `rediscover_button`, `details_button`, `registry_log_button` (gibt das Register ins Log aus).
 
 Erste Prüfung auf der Hardware (Log vom 12.10.2026, 07:58–10:12, erste Fassung mit 55 s Zeitlimit und gemeinsamer Erkundung):
 
@@ -246,14 +246,25 @@ Zweite Prüfung auf der Hardware (Log vom 13.10.2026, 02:12–02:35, Netzdetails
 - Start mit `nodes.bin` (21 Knoten): Die Erkundung nahm nur SID 16 und endete nach 48 s mit `D4 01` als „nicht erreichbar“. „Discover Network“ um 02:17 lief ebenso, 44 s. Kein Schreibvorgang, weil sich keine Kennung änderte.
 - „Netzdetails“ um 02:19: SID 0 bis 5 in 15,5 min. Alle Antworten kamen innerhalb von 180 s, die längste nach 175,7 s (P16). Keine Sperrphase „Modul taktet nicht“, keine Warnung außer SID 16.
 - Der WHT-630 an SID 3 meldet in `C8` erneut 0 mV (P13). Die Brücke zeigt „Batterie 0 mV“.
+- Weitere Befunde aus diesem Log: `D4 01` nach 44–48 s (P12), Laufzeiten mit genau einer offenen Anfrage (P16), 500-ms-Raster der Fernantworten (P17).
+
+Überarbeitung nach der zweiten Hardware-Prüfung:
+
+- Zeitlimit für Fernantworten 240 s. Die längste Antwort kam nach 175,7 s, nur 4 s unter dem bisherigen Limit (P16). Unerreichbare Ziele kosten trotzdem nur etwa 45 s, weil `D4 01` das Warten beendet (P12).
+- Kein `C7` an den WHT-630, seine `C8` enthalten keine Spannung (P13).
+- Unerreichbare SIDs: Die Erkundung fragt bei jedem Lauf ihren Remote-Status. Die Netzdetails überspringen sie, solange keine Antwort kam.
+- `C5` nur bei Bedarf: erst wenn `73` zur eigenen Abfrage Fehler meldet. Das spart je fehlerfreiem Melder die längste Anfrage (`C6` 32–127 s, P16).
+- Host-Tests ergänzt (Netzdetails ohne unerreichbare SIDs, WHT-630 ohne Batterie, `C5` nach `73` mit Fehlern).
 
 ### Stufe 3: Melder als Geräte in Home Assistant
+
+Stand: im Code umgesetzt (`node_view`, `detector`, Integration in `wisafe2.cpp`, Schema in `__init__.py`, Host-Tests `test_node_view.cpp`; alle Host-Tests zusammen 809 Prüfungen). ESPHome-Build mit 21 Meldern als Sub-Devices ohne Warnungen. Die Abnahme auf der Hardware folgt.
 
 Ziel: Jeder Melder erscheint mit eigenen Entitäten über die native API **[E6]**.
 
 - Die Melder werden in der YAML aufgelistet, mit SID oder Geräte-ID und einem Namen.
 - Nach einer Erkundung loggt die Brücke für alle gefundenen Melder einen fertigen YAML-Block als Vorlage.
-- Zusätzlich gibt ein Text-Sensor das ganze Register als JSON aus. Darin erscheinen auch Melder, die noch nicht in der YAML stehen.
+- Ein Text-Sensor nennt die Knoten im Register, die noch nicht in der YAML stehen. Geplant war das ganze Register als JSON; Home Assistant begrenzt Zustände aber auf 255 Zeichen, das reicht für 22 Knoten nicht (Nachtrag in E6).
 
 Entitäten je Melder:
 
@@ -272,8 +283,8 @@ Netzweite Entitäten:
 - Anzahl Knoten
 - Erkundung läuft
 - Status des eigenen RM
-- Register (JSON)
-- Buttons „Discover Network“ und „Rediscover Network“
+- nicht zugeordnete Melder (statt Register als JSON)
+- Buttons „Discover Network“, „Rediscover Network“ und „YAML-Vorlage“
 
 Home-Assistant-Ereignisse für Alarm, Alarmende, Stummschaltung, Test und Fehlerbericht, damit Automationen darauf reagieren können.
 
@@ -284,7 +295,31 @@ Regeln für den Alarmzustand (übernommen aus NikNakk und der Protokollanalyse):
 - `61` (Stummschaltung) beendet ihn nicht.
 - Abfragen setzen ihn nie auf „aus“.
 
-Abnahme: Alle Melder erscheinen in Home Assistant. Testtaste und Sockel-Entnahme verändern die passenden Entitäten.
+Umsetzung im Detail:
+
+- `node_view` (ohne ESPHome-Header, auf dem Host getestet) leitet aus einem Registerplatz die Zustände ab, jeweils mit „unbekannt“, solange keine passende Nachricht kam:
+  - Alarm aus `50`/`51`.
+  - Fehler aus `71` Flag 0x02 oder `73` mit FS ungleich 0.
+  - Sockel-Problem aus `71` ohne Flag 0x04.
+  - Melder-Batterie schwach aus `71` Flag 0x08 oder dem Batterie-Bit in `73` (je Modell; bei W2-SVP-630, SVP-630-B und W2-LFS-630 ohne Bit).
+  - RM-Batterie schwach aus `71` Flag 0x20 oder dem RM-Batterie-Bit in `73`.
+  - Im Netz: in der SID-Map und nicht unerreichbar.
+  - Dazu die Texte für Modell, Fehlerdetails, letzten Test, letztes Ereignis, Zeitstempel und die YAML-Vorlage.
+- Zuordnung (`Registry::resolve`): über die Geräte-ID, sonst über die SID. Mit beiden Angaben gilt die SID nur, solange dort keine andere Geräte-ID steht. Bei zwei SIDs mit derselben ID gilt der Eintrag mit Modell (P14). Die Zuordnung wird nach jeder Änderung einer Kennung neu berechnet.
+- `Detector` (ESPHome) hält die Entitäten eines Melders. Geändert wird gesammelt in `loop()`: Nachrichten und Abfrageergebnisse markieren ihre SID, Karten und Zuordnungsänderungen alles. Veröffentlicht werden nur geänderte Werte. „Im Netz“ erst nach der ersten SID-Map, „zuletzt gesehen“ höchstens einmal je Minute.
+- Zeitangaben („zuletzt gesehen“ als Text-Sensor mit `device_class: timestamp`, Uhrzeit des letzten Tests) nutzen die Systemzeit, die eine `time`-Komponente stellt. Ohne gestellte Uhr bleiben sie leer bzw. ohne Uhrzeit.
+- Ereignisse: Je Melder und netzweit eine Event-Entität mit den Typen `alarm`, `alarm_ende`, `stummschaltung`, `test`, `fehlerbericht`. Sie folgen den Funknachrichten `50`, `51`, `61`, `70`, `71` nach dem Duplikatfilter. Der Text-Sensor „letztes Ereignis“ zeigt sie lesbar, etwa „Alarm: SID 14 (Flur), Rauch“.
+- Button „Status aktualisieren“ je Melder: Remote-Status, Batterie und Fehlerdetails über die Planung der Netzdetails, mit denselben Regeln (kein `C7` an den WHT-630, `C5` nur bei Fehlern).
+- YAML: `detectors` mit `sid` und/oder `device_id`, `name` und optional `device` (Sub-Device aus `esphome: devices`). Ohne `device` tragen die Entitäten den Meldernamen als Präfix. Jede Entität entsteht ohne Angabe, lässt sich anpassen oder mit `false` abwählen. Name und Sub-Device werden vor der Prüfung der Entitäten gesetzt, damit die Duplikatprüfung von ESPHome greift. Doppelte SIDs oder Geräte-IDs in `detectors` weist die Prüfung ab.
+- YAML-Vorlage: nach jeder Erkundung und per Button, nur für Knoten ohne Eintrag. Sie erscheint in kurzen Abständen als mehrere Logmeldungen, zuerst `esphome: devices`, dann `wisafe2: detectors`. Die Alarm-Entität bekommt `device_class: heat` bzw. `carbon_monoxide` nach der Klasse.
+- Speicher **[R6]**: 21 Melder mit allen Entitäten (313) und acht netzweiten Entitäten belegen 16 KB RAM und 27 KB Flash mehr als ohne Melder; die Firmware nutzt damit 103 KB von 512 KB RAM.
+
+Abnahme:
+
+- Alle Melder erscheinen in Home Assistant, mit `device` als eigene Geräte.
+- Testtaste und Sockel-Entnahme verändern die passenden Entitäten und lösen Ereignisse aus.
+- Die YAML-Vorlage nach der Erkundung lässt sich übernehmen; danach ist „nicht zugeordnete Melder“ leer.
+- Antwortzeit der API und freier Speicher mit allen Entitäten im Betrieb **[R6]**.
 
 ### Stufe 4: Diagnose und Netztest
 
@@ -310,7 +345,7 @@ Ein späterer Assistent bekommt eine eigene Absicherung und eine eigene Planung,
 - **Host-Tests:** Jede Stufe erweitert die Tests auf dem PC. Testdaten sind die Beispielrahmen der Protokollanalyse und Mitschnitte aus dem eigenen Netz. Vorschlag: zusätzlich eine GitHub Action, die die Tests und einen ESPHome-Build ausführt.
 - **Mitschnitte:** Optional ein Debug-Schalter, der jeden Rohrahmen mit Zeitstempel loggt. Er hilft bei offenen Punkten wie `D5` und der Bestätigung von `D4 10` (P3). Neue Befunde werden in Abschnitt 9 gesammelt.
 - **Dateisystem:** Für `nodes.bin` braucht der Pico ein LittleFS im Flash. Die Größe wird in der YAML über `platformio_options` festgelegt; die kleinste Stufe reicht.
-- **Speicher:** Das Register mit 50 Plätzen braucht wenige KB. Entitäten für 22 Melder mit je ~13 Einträgen sind rund 290 Entitäten. Ob das mit der ESPHome-API auf dem RP2350 flüssig läuft, wird in Stufe 3 gemessen **[R6]**.
+- **Speicher:** Das Register mit 50 Plätzen braucht wenige KB. Gemessen im Build von Stufe 3: 21 Melder mit je 15 Entitäten kosten 16 KB RAM und 27 KB Flash. Wie flüssig die API damit läuft, zeigt die Abnahme **[R6]**.
 - **Dokumentation:** README und Hardware-Unterlage wachsen mit jeder Stufe.
 
 ## 5. Reihenfolge
@@ -328,7 +363,7 @@ Getroffen am 11.10.2026.
 | E3 | Identität der Brücke (`91` auf `41`)? | Geräte-ID fest in der YAML, hier `14B8A5` (die ID, die das Modul am Pico bereits aus dem Pairing trägt). Klasse `FF`, jedes `41` beantworten. Modell per YAML, Vorgabe `11 03` (wie Arduino-Firmware und NikNakk) |
 | E4 | Antworten auf Anfragen an die eigene Geräte-ID? | Alle beantworten: `C3`→`C4`, `72`→`73`, `C7`→`C8`, `C5`→`C6`, `C1`→`C2`, mit festen Werten (keine Fehler, 3000 mV, keine Ereignisse, Diagnose bestanden) |
 | E5 | Wie oft werden Melder aus der Ferne abgefragt? | Zielbetrieb: Erkundung beim Start, `D3 06` je SID alle 19 h, `C7` je Melder alle 24 h, ereignisgesteuerte Abfragen. In Entwicklung und Test nur beim Start und auf Knopfdruck. Umschaltung über YAML `auto_discovery`. Nachtrag 12.10.2026: Die Erkundung beim Start ermittelt nur die Kennung (Geräte-ID, Klasse, Modell). Batterie, Fehler und RM-Werte kommen über den getrennten Ablauf „Netzdetails“ auf Knopfdruck und über die periodischen Abfragen |
-| E6 | Wie werden die Melder zu Entitäten? | Melder in der YAML auflisten, Vorlage aus dem Log, dazu das Register als JSON-Text-Sensor. Alles über die native API |
+| E6 | Wie werden die Melder zu Entitäten? | Melder in der YAML auflisten, Vorlage aus dem Log, dazu das Register als JSON-Text-Sensor. Alles über die native API. Nachtrag 13.10.2026: Home Assistant begrenzt Zustände auf 255 Zeichen. Statt des JSON-Registers nennt ein Text-Sensor die Knoten ohne Eintrag in der YAML; das ganze Register steht per Button im Log |
 | E7 | Melderregister speichern? | Ja, als Binärdatei `nodes.bin` mit festen 50 Plätzen (408 Byte), nur bei Änderung, gebündelt. Button „Rediscover Network“ löscht das Register und erkundet neu |
 | E8 | Wann gilt ein Knoten als nicht erreichbar? | Nach `D4 01` oder zwei ausbleibenden Antworten in Folge. Entfernen nur über „Rediscover Network“. Nachtrag 13.10.2026: `D4 01` kommt bei nur einer offenen Anfrage nach 44–48 s und beendet das Warten sofort (P12). Ohne `D4 01` zählt das Ausbleiben der Antwort innerhalb von `remote_timeout` |
 | E9 | Unbekannter Rahmen `D4 10 BF 7F 0E 05 00 00 00 00 14`? | Weiter mitschneiden, roh loggen, Auswertung erst bei geklärter Bedeutung. Nachtrag 12.10.2026: Format und wahrscheinliche Bedeutung in P2 und P3. Die Brücke nutzt `D4 10` als Bereitschaftssignal nach dem Init (P1). Ab Stufe 1 wird `D4 10` lesbar geloggt, etwa „Init-Antworten: 20 Knoten (…), eigene SID 20“. Ins Register geht es vorerst nicht ein |
@@ -345,18 +380,18 @@ Getroffen am 11.10.2026.
 | R3 | Feldbedeutungen sind teils vermutet (`50` d5, `61` SID, `D2` d12, `D4 06` d5, `71` Bit 0x80, `C6`-Ereignisse) | unsichere Felder als „roh“ ausgeben und kennzeichnen, mit Mitschnitten nachschärfen |
 | R4 | Doppelte Geräte-ID der Brücke im Netz | eigene ID aus der YAML per `91` (E3), Abgleich mit `D1` in Stufe 1 |
 | R5 | Flash-Schreibvorgänge für `nodes.bin` halten Kern 1 an, SPI-Bytes können verloren gehen | seltene, gebündelte Schreibvorgänge (E7), nur in Ruhephasen ohne laufenden Rahmen und Sendevorgang (umgesetzt in Stufe 2). Bei der Abnahme von Stufe 2 messen, ob das RM verlorene Bytes wiederholt |
-| R6 | Viele Entitäten belasten API und Speicher | Messung in Stufe 3, Diagnoseentitäten optional |
+| R6 | Viele Entitäten belasten API und Speicher | Speicher gemessen (Stufe 3: 103 KB von 512 KB RAM mit 21 Meldern); jede Entität je Melder mit `false` abwählbar. Das Verhalten der API im Betrieb prüft die Abnahme |
 | R7 | Ein Alarm kann übersehen werden, wenn die Brücke ausfällt oder Rahmen verliert | Brücke bleibt Zusatz. Ereignisse für Alarm und Verbindung zur Brücke in Home Assistant überwachen |
 | R8 | Das eigene RM hängt nach dem Einlernen eines anderen Knotens | Watchdog: bleibt `46` mehrfach aus, Hinweis im Status. Ein automatischer Neustart des RM braucht eine schaltbare Versorgung |
 | R9 | Die Brücke wird nach dem Init zum Empfänger aller Hostantworten. Ob das andere Abfragende stört, ist offen | bei den Tests von Stufe 2 beobachten, im Zweifel E2 neu entscheiden |
 | R10 | Mit Klasse `FF` blinkt die LED des Funkmoduls vermutlich alle paar Sekunden | bekannt und beabsichtigt |
 | R11 | Netztest und Diagnose lösen ohne Rückfrage aus, auch über Home-Assistant-Automationen | bekannt und beabsichtigt; Funktionen per YAML zuschaltbar, jede Auslösung im Log und als Ereignis |
 | R12 | Feste Antworten auf `72`/`C7`/`C5`/`C1` könnten andere Werkzeuge (Gateway, wisafe-mm) über den Zustand der Brücke täuschen | bekannt und beabsichtigt; die Werte entsprechen einem fehlerfreien Gerät |
-| R13 | Mit 180 s Zeitlimit kostet jede SID ohne Antwort 3 min, die Netzdetails dauern damit lange | Erkundung beim Start nur für unvollständige Einträge, Netzdetails nur auf Knopfdruck oder verteilt; Zeitlimit per YAML anpassbar, sobald genug Laufzeiten gemessen sind |
+| R13 | Mit 240 s Zeitlimit kostet jede SID ohne Antwort bis zu 4 min, die Netzdetails dauern damit lange | Erkundung beim Start nur für unvollständige Einträge, Netzdetails nur auf Knopfdruck oder verteilt; unerreichbare SIDs nur in der Erkundung, wo `D4 01` nach etwa 45 s das Warten beendet (P12); `C5` nur bei Fehlern; Zeitlimit per YAML anpassbar |
 
 ## 8. Nächster Schritt
 
-Weitere Hardware-Abnahme von Stufe 2 mit der überarbeiteten Firmware (Abschnitt 3): Start mit vorhandener `nodes.bin` und Erkundung der unvollständigen SIDs, „Netzdetails“, Neustart ohne Erkundung, „Rediscover Network“. Aus Stufe 1 bleibt die Testtaste offen; sie lässt sich mit dem Meldertest zusammen abnehmen. Danach folgt Stufe 3 nach Freigabe.
+Hardware-Abnahme mit der Firmware von Stufe 3 (Abschnitt 3): aus Stufe 2 eine vollständige Runde „Netzdetails“ mit 240 s, Neustart ohne Erkundung und „Rediscover Network“; für Stufe 3 die YAML-Vorlage übernehmen, Melder in Home Assistant prüfen, Testtaste und Sockel-Entnahme. Die Testtaste schließt zugleich die Abnahme von Stufe 1 ab. Danach folgt Stufe 4 nach Freigabe.
 
 ## 9. Neue Erkenntnisse zum Protokoll
 
@@ -494,7 +529,7 @@ Beobachtung vom 12.10.2026, Log über die native API, 07:58–10:12, zwei Erkund
 - Startet nach dem Zeitlimit die nächste Anfrage, kommen die Antworten gebündelt: etwa `D4 06` von SID 9 nach 140 s, drei Sekunden vor der Antwort von SID 11, die zwei Anfragen später gesendet wurde. `C6` von SID 4 kam nach 219 s, während drei weitere Remote-Status-Anfragen liefen. Vermutet: Das Netz arbeitet Fernanfragen nacheinander ab, eine neue Anfrage verlängert die Laufzeit der offenen.
 - Einige Antworten kamen nie, etwa `73` von SID 7 und SID 26 und der Remote-Status von SID 10, jeweils nachdem die Brücke nach 55 s die nächste Anfrage gesendet hatte.
 - `73` und `C6` brauchen meist deutlich länger als `C4` und `C8`.
-- Folgerung für einen Host: auf jede Antwort warten, Zeitlimit deutlich über 100 s. Die Brücke nutzt 180 s. Messungen mit nur einer offenen Anfrage stehen in P16.
+- Folgerung für einen Host: auf jede Antwort warten, Zeitlimit deutlich über 100 s. Die Brücke nutzt seit dem 13.10.2026 240 s. Messungen mit nur einer offenen Anfrage stehen in P16.
 
 ### P11: Das Modul nimmt während laufender Fernanfragen zeitweise keine Bytes an
 
@@ -526,7 +561,7 @@ Beobachtung vom 12.10.2026, SID 3, WHT-630, Gerät 132F08, vermutet.
 | 13.10.2026 02:26:59 | `C8 08 2F 13 06 00 00 00 00 03 07` | `00 00` |
 
 - Die ST-630-DE melden plausible Werte von 2945 bis 3039 mV. Der WHT-630 meldet einmal seine Modell-ID und zweimal 0.
-- Vermutet: Der WHT-630 misst in `C8` keine Spannung, die Felder sind unbelegt. Bis zur Klärung zeigt die Brücke den Wert unverändert; in Stufe 3 sollte die Batterie-Entität des WHT-630 entfallen oder als unbekannt gelten.
+- Vermutet: Der WHT-630 misst in `C8` keine Spannung, die Felder sind unbelegt. Die Brücke sendet ihm deshalb kein `C7` mehr, und seine Batterie-Entität bleibt unbekannt.
 - Gegenprobe: `C7` an weitere WHT-630, Vergleich mit der Anzeige im W2-MM.
 
 ### P14: Zwei SIDs mit derselben Geräte-ID
