@@ -189,6 +189,15 @@ void test_reachability() {
   CHECK(registry.find(25)->is_detector());
   CHECK(!registry.find(25)->has_fault_events_support());
 
+  // Ein 71 mit Modell zeigt ebenso einen Melder; die Klasse fehlt, die nächste Erkundung fragt C4 erneut.
+  apply(registry, {0xD4, 0x06, 0x1A, 0x86, 0xBB, 0xBB, 0x70, 0xDF, 0x93, 0xD3, 0x33, 0x00, 0x00});
+  registry.on_query_result(26, QUERY_IDENTITY, Outcome::Timeout);
+  CHECK((registry.find(26)->flags & NODE_TYPE_UNKNOWN) != 0);
+  CHECK((apply(registry, {0x71, 0x93, 0xD3, 0x33, 0x7C, 0x04, 0x05, 0x1A, 0x02}) & CHANGE_IDENTITY) != 0);
+  CHECK((registry.find(26)->flags & NODE_TYPE_UNKNOWN) == 0);
+  CHECK(!registry.find(26)->complete());
+  CHECK(registry.find(26)->is_detector());
+
   // Ohne Platz bleibt das Ergebnis folgenlos.
   CHECK_EQ(registry.on_query_result(40, QUERY_REMOTE_STATUS, Outcome::Timeout), 0);
 }

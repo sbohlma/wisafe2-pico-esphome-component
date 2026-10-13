@@ -207,6 +207,8 @@ void test_template() {
   apply(registry, {0xD4, 0x03, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00});
   const Node &unknown = *registry.find(16);
   CHECK(!template_by_device(registry, unknown));
+  // Ohne Geräte-ID ist offen, ob an SID 16 ein Melder sitzt; sie gehört nicht in die Vorlage.
+  CHECK(!node_assignable(unknown));
   // WHT-630 132F08 an SID 3 aus C4.
   apply(registry, {0xC4, 0x08, 0x2F, 0x13, 0x82, 0x11, 0x04, 0x03, 0x05});
   const Node &heat = *registry.find(3);
@@ -221,18 +223,17 @@ void test_template() {
   CHECK(alarm_device_class(0xC9) == nullptr);
 
   describe_unassigned(registry, 0, text, sizeof(text));
-  CHECK(std::strcmp(text, "SID 3, 14, 16, 24") == 0);
-  describe_unassigned(registry, (uint64_t{1} << 3) | (uint64_t{1} << 14), text, sizeof(text));
-  CHECK(std::strcmp(text, "SID 16, 24") == 0);
-  // Ein RM ohne Melder gehört nicht in die YAML.
-  registry.on_query_result(24, QUERY_IDENTITY, Outcome::Timeout);
-  CHECK(!node_assignable(*registry.find(24)));
-  describe_unassigned(registry, (uint64_t{1} << 3) | (uint64_t{1} << 14) | (uint64_t{1} << 16), text,
-                      sizeof(text));
-  CHECK(std::strcmp(text, "keine") == 0);
+  CHECK(std::strcmp(text, "SID 3, 14, 24") == 0);
   char small[16];
   describe_unassigned(registry, 0, small, sizeof(small));
   CHECK(std::strcmp(small, "SID 3, 14, …") == 0);
+  describe_unassigned(registry, (uint64_t{1} << 3) | (uint64_t{1} << 14), text, sizeof(text));
+  CHECK(std::strcmp(text, "SID 24") == 0);
+  // Ein RM ohne Melder gehört nicht in die YAML.
+  registry.on_query_result(24, QUERY_IDENTITY, Outcome::Timeout);
+  CHECK(!node_assignable(*registry.find(24)));
+  describe_unassigned(registry, (uint64_t{1} << 3) | (uint64_t{1} << 14), text, sizeof(text));
+  CHECK(std::strcmp(text, "keine") == 0);
 }
 
 }  // namespace
