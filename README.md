@@ -287,9 +287,9 @@ Mit `device` landen die Entitäten eines Melders auf einem eigenen Gerät in Hom
 esphome:
   name: wisafe2-bridge
   devices:
-    - id: melder_flur
+    - id: alarm_2FE43D
       name: "Rauchmelder Flur"
-    - id: melder_kueche
+    - id: alarm_132F08
       name: "Hitzemelder Küche"
 
 time:
@@ -299,11 +299,10 @@ wisafe2:
   detectors:
     - sid: 14
       device_id: "2FE43D"
-      name: "Flur"
-      device: melder_flur
+      device: alarm_2FE43D
     - device_id: "132F08"
       name: "Küche"
-      device: melder_kueche
+      device: alarm_132F08
       alarm:
         device_class: heat
       battery_voltage: false
@@ -311,7 +310,7 @@ wisafe2:
       name: "Keller"
 ```
 
-Ohne `device` stehen die Entitäten auf dem Gerät der Brücke, mit dem Namen des Melders davor, etwa „Keller Alarm“. `name` erscheint außerdem im Log und in `last_event`. `zuletzt gesehen` und die Uhrzeit des letzten Tests brauchen eine gestellte Uhr, etwa über `time: platform: homeassistant`.
+`name` ist der Name des Melders im Log und in `last_event`. Mit `device` darf er fehlen, dann gilt der Name des Geräts, hier „Rauchmelder Flur“. Ohne `device` ist `name` nötig: Die Entitäten stehen dann auf dem Gerät der Brücke, mit dem Namen des Melders davor, etwa „Keller Alarm“. `zuletzt gesehen` und die Uhrzeit des letzten Tests brauchen eine gestellte Uhr, etwa über `time: platform: homeassistant`.
 
 Ohne weitere Angabe entstehen alle Entitäten. Jede lässt sich mit `false` abwählen oder mit den üblichen Einstellungen anpassen, etwa `name`, `icon`, `device_class`, `disabled_by_default` oder `internal`:
 
@@ -348,7 +347,7 @@ Netzweite Einträge, alle optional:
 | `unassigned` | text_sensor | Knoten im Register ohne Eintrag in `detectors`, etwa `SID 4, 7, 12`; eigenes RM, Gateway-RMs und RMs ohne Melder zählen nicht mit |
 | `template_button` | button | YAML-Vorlage für die Knoten ohne Eintrag ins Log |
 
-Nach jeder Erkundung und auf `template_button` schreibt die Brücke eine Vorlage für alle Knoten ohne Eintrag ins Log, zuerst den Block für `esphome: devices`, dann den für `wisafe2: detectors`. Die Namen kommen aus Modell und Geräte-ID und lassen sich danach anpassen. Jeder Melder ist eine eigene Logmeldung, ihre Kopfzeile ist ein YAML-Kommentar wie `# SID 14`.
+Nach jeder Erkundung und auf `template_button` schreibt die Brücke eine Vorlage für alle Knoten ohne Eintrag ins Log, zuerst den Block für `esphome: devices`, dann den für `wisafe2: detectors`. Die Geräte heißen `alarm_` mit der Geräte-ID, ihre Namen kommen aus Modell und Geräte-ID und lassen sich danach anpassen; unter `detectors` steht kein `name`, dort gilt der Name des Geräts. Jeder Melder ist eine eigene Logmeldung, ihre Kopfzeile ist ein YAML-Kommentar wie `# SID 14`.
 
 Der Log-Client setzt vor jede Zeile einen Zeitstempel und vor eingerückte Zeilen zusätzlich das Präfix der Meldung, etwa `[08:19:46.895][I][wisafe2:462]: `. Ohne diesen Vorspann ist die Vorlage gültiges YAML. Im Editor entfernt ihn „Suchen und Ersetzen“ mit dem regulären Ausdruck `^\[[0-9:.]+\](\[I\]\[wisafe2:[0-9]+\]: )?` und leerem Ersatztext. Zeilen anderer Komponenten, die dazwischen stehen, etwa `[S][sensor]: …`, gehören nicht zur Vorlage. Die Einträge unter `devices` und `detectors` kommen in die vorhandenen Blöcke `esphome:` und `wisafe2:`. Bereinigt sieht die Vorlage so aus:
 
@@ -357,10 +356,10 @@ Der Log-Client setzt vor jede Zeile einen Zeitstempel und vor eingerückte Zeile
 esphome:
   devices:
     # SID 3
-    - id: melder_132f08
+    - id: alarm_132F08
       name: "WHT-630 132F08"
     # SID 14
-    - id: melder_2fe43d
+    - id: alarm_2FE43D
       name: "ST-630-DE 2FE43D"
 # YAML-Vorlage, Fortsetzung
 wisafe2:
@@ -368,15 +367,13 @@ wisafe2:
     # SID 3
     - sid: 3
       device_id: "132F08"
-      name: "WHT-630 132F08"
-      device: melder_132f08
+      device: alarm_132F08
       alarm:
         device_class: heat
     # SID 14
     - sid: 14
       device_id: "2FE43D"
-      name: "ST-630-DE 2FE43D"
-      device: melder_2fe43d
+      device: alarm_2FE43D
 # YAML-Vorlage Ende
 ```
 
