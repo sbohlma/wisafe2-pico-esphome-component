@@ -1,6 +1,6 @@
 # Umsetzungsplan: W2-Modulprotokoll auf der Pico-2-W-Brücke
 
-Stand: 13.10.2026, Entscheidungen E1–E12 getroffen, E3 und E7 überarbeitet, Stufe 0 umgesetzt und auf der Hardware abgenommen, Init-Sequenz korrigiert (Abschnitt 9), Stufe 1 bis auf die Testtaste abgenommen, Stufe 2 umgesetzt, nach der ersten Hardware-Prüfung überarbeitet (Zeitlimit, Erkundung und Netzdetails getrennt) und nach der zweiten nachgeschärft (Zeitlimit 240 s, Abfragen je Modell und Erreichbarkeit), Stufe 3 umgesetzt und in der Abnahme (zwei Hardware-Prüfungen ausgewertet), vollständige Runde „Netzdetails“ abgenommen, Netztest aus Stufe 4 umgesetzt. Grundlage ist [PROTOCOL_ANALYSIS_W2_MODULE.md](https://github.com/sbohlma/FireAngel/blob/main/wisafe-mm/docs/PROTOCOL_ANALYSIS_W2_MODULE.md) (im Folgenden „Protokollanalyse“) mit den dort genannten Quellen, vor allem NikNakks [fireangel-pro-connected-esphome](https://github.com/NikNakk/fireangel-pro-connected-esphome), Tho85s [ws2mqtt](https://github.com/Tho85/ws2mqtt) und [wisafe-mm](https://github.com/sbohlma/FireAngel/tree/main/wisafe-mm).
+Stand: 18.10.2026, Entscheidungen E1–E12 getroffen, E3 und E7 überarbeitet, Stufe 0 umgesetzt und auf der Hardware abgenommen, Init-Sequenz korrigiert (Abschnitt 9), Stufe 1 bis auf die Testtaste abgenommen, Stufe 2 umgesetzt, nach der ersten Hardware-Prüfung überarbeitet (Zeitlimit, Erkundung und Netzdetails getrennt) und nach der zweiten nachgeschärft (Zeitlimit 240 s, Abfragen je Modell und Erreichbarkeit), Stufe 3 umgesetzt und in der Abnahme (zwei Hardware-Prüfungen ausgewertet), vollständige Runde „Netzdetails“ abgenommen, Netztest aus Stufe 4 umgesetzt, Zähler für Fernanfragen (R1), Watchdog für das Funkmodul (R8) und Schalter für Rohrahmen umgesetzt. Grundlage ist [PROTOCOL_ANALYSIS_W2_MODULE.md](https://github.com/sbohlma/FireAngel/blob/main/wisafe-mm/docs/PROTOCOL_ANALYSIS_W2_MODULE.md) (im Folgenden „Protokollanalyse“) mit den dort genannten Quellen, vor allem NikNakks [fireangel-pro-connected-esphome](https://github.com/NikNakk/fireangel-pro-connected-esphome), Tho85s [ws2mqtt](https://github.com/Tho85/ws2mqtt) und [wisafe-mm](https://github.com/sbohlma/FireAngel/tree/main/wisafe-mm).
 
 Ziel: Alle Melder im Netz erscheinen in ESPHome und Home Assistant mit Zustand, Fehlern, Batterie und Ereignissen. Diagnose und Netztest stehen als Funktionen bereit.
 
@@ -126,7 +126,7 @@ Abnahme (Stand 12.10.2026, Logs 02:48–03:02 und 03:39–04:30):
 
 ### Stufe 2: Melderregister und Netzerkundung
 
-Stand: im Code umgesetzt (`registry`, `discovery`, `node_store`, Buttons in `buttons.h`, Host-Tests `test_registry.cpp` und `test_discovery.cpp`). Nach der ersten Prüfung auf der Hardware am 12.10.2026 überarbeitet: Zeitlimit für Fernantworten per YAML einstellbar, Erkundung und Netzdetails als getrennte Abläufe (siehe „Überarbeitung nach der ersten Hardware-Prüfung“). Nach der zweiten Prüfung am 13.10.2026 nachgeschärft: Zeitlimit 240 s, kein `C7` an den WHT-630, unerreichbare SIDs nur in der Erkundung, `C5` nur bei gemeldeten Fehlern (siehe „Überarbeitung nach der zweiten Hardware-Prüfung“). Am 13.10.2026 lief eine vollständige Runde „Netzdetails“ ohne Zeitüberschreitung (siehe „Dritte Prüfung auf der Hardware“). Offen ist noch „Rediscover Network“ in einem Lauf.
+Stand: im Code umgesetzt (`registry`, `discovery`, `node_store`, Buttons in `buttons.h`, Host-Tests `test_registry.cpp` und `test_discovery.cpp`). Nach der ersten Prüfung auf der Hardware am 12.10.2026 überarbeitet: Zeitlimit für Fernantworten per YAML einstellbar, Erkundung und Netzdetails als getrennte Abläufe (siehe „Überarbeitung nach der ersten Hardware-Prüfung“). Nach der zweiten Prüfung am 13.10.2026 nachgeschärft: Zeitlimit 240 s, kein `C7` an den WHT-630, unerreichbare SIDs nur in der Erkundung, `C5` nur bei gemeldeten Fehlern (siehe „Überarbeitung nach der zweiten Hardware-Prüfung“). Am 13.10.2026 lief eine vollständige Runde „Netzdetails“ ohne Zeitüberschreitung (siehe „Dritte Prüfung auf der Hardware“). Offen sind noch „Rediscover Network“ in einem Lauf und die periodischen Abfragen mit `auto_discovery: true` (E5): `D3 06` je SID alle 19 h, `C7` je Melder alle 24 h, gleichmäßig verteilt ab 15 min nach dem Start. Sie sind im Code umgesetzt und laufen bisher nur auf dem PC in den Host-Tests.
 
 Ziel: Die Brücke kennt alle Knoten des Netzes und hält deren Zustand aktuell.
 
@@ -388,8 +388,8 @@ Ein späterer Assistent bekommt eine eigene Absicherung und eine eigene Planung,
 
 ## 4. Querschnittsthemen
 
-- **Host-Tests:** Jede Stufe erweitert die Tests auf dem PC. Testdaten sind die Beispielrahmen der Protokollanalyse und Mitschnitte aus dem eigenen Netz. Vorschlag: zusätzlich eine GitHub Action, die die Tests und einen ESPHome-Build ausführt.
-- **Mitschnitte:** Optional ein Debug-Schalter, der jeden Rohrahmen mit Zeitstempel loggt. Er hilft bei offenen Punkten wie `D5` und der Bestätigung von `D4 10` (P3). Neue Befunde werden in Abschnitt 9 gesammelt.
+- **Host-Tests:** Jede Stufe erweitert die Tests auf dem PC. Testdaten sind die Beispielrahmen der Protokollanalyse und Mitschnitte aus dem eigenen Netz. Tests und ESPHome-Build laufen von Hand (`make -C tests/host`, `esphome compile`). Entschieden am 18.10.2026: Die GitHub Action entfällt.
+- **Mitschnitte:** Umgesetzt am 18.10.2026 als Schalter `raw_log_switch` (Kategorie Konfiguration, nach dem Start aus). Eingeschaltet loggt die Brücke unter dem Tag `wisafe2.raw` jeden Rohrahmen so, wie er über SPI läuft: maskiert, mit `7E` und mit führenden Füllbytes `00`. Kern 1 stempelt jedes empfangene Byte und das Ende jeder Sendung mit dem µs-Zähler des Pico; die Zeile trägt die Zeit seit dem Start und den Abstand zur vorigen Rohzeile. Er hilft bei offenen Punkten wie `D5`, der Bestätigung von `D4 10` (P3) und dem Zeitraster (P17). Neue Befunde werden in Abschnitt 9 gesammelt.
 - **Dateisystem:** Für `nodes.bin` braucht der Pico ein LittleFS im Flash. Die Größe wird in der YAML über `platformio_options` festgelegt; die kleinste Stufe reicht.
 - **Speicher:** Das Register mit 50 Plätzen braucht wenige KB. Gemessen im Build von Stufe 3: 21 Melder mit je 15 Entitäten kosten 16 KB RAM und 27 KB Flash. Wie flüssig die API damit läuft, zeigt die Abnahme **[R6]**.
 - **Dokumentation:** README und Hardware-Unterlage wachsen mit jeder Stufe.
@@ -421,14 +421,14 @@ Getroffen am 11.10.2026.
 
 | Nr. | Risiko | Gegenmaßnahme |
 | --- | --- | --- |
-| R1 | Fernabfragen belasten die Batterien aller Melder | in der Entwicklung keine periodischen Abfragen (E5), Start-Erkundung nur für unbekannte SIDs, Zähler für gesendete Fernanfragen als Sensor |
+| R1 | Fernabfragen belasten die Batterien aller Melder | in der Entwicklung keine periodischen Abfragen (E5), Start-Erkundung nur für unbekannte SIDs, Zähler für gesendete Fernanfragen als Sensor. Umgesetzt am 18.10.2026: Sensor `remote_requests` zählt jede eigene Fernanfrage, die das Modul mit `46` quittiert (Hostantworten zählen nicht), `total_increasing`, nach einem Neustart ab 0 |
 | R2 | Parallele Fernanfragen gehen verloren | Sendeplanung mit genau einer offenen Fernanfrage und 500 ms Ruhe |
 | R3 | Feldbedeutungen sind teils vermutet (`50` d5, `61` SID, `D2` d12, `D4 06` d5, `71` Bit 0x80, `C6`-Ereignisse) | unsichere Felder als „roh“ ausgeben und kennzeichnen, mit Mitschnitten nachschärfen |
 | R4 | Doppelte Geräte-ID der Brücke im Netz | eigene ID aus der YAML per `91` (E3), Abgleich mit `D1` in Stufe 1 |
 | R5 | Flash-Schreibvorgänge für `nodes.bin` halten Kern 1 an, SPI-Bytes können verloren gehen | seltene, gebündelte Schreibvorgänge (E7), nur in Ruhephasen ohne laufenden Rahmen und Sendevorgang (umgesetzt in Stufe 2). Bei der Abnahme von Stufe 2 messen, ob das RM verlorene Bytes wiederholt. Gemessen: Ein Schreibvorgang dauert 47–138 ms. ESPHome warnt ab 50 ms („took a long time for an operation“) und hebt die Schwelle danach je Komponente selbst an; die Warnung ist erwartet und in der README erklärt |
 | R6 | Viele Entitäten belasten API und Speicher | Speicher gemessen (Stufe 3: 103 KB von 512 KB RAM mit 21 Meldern); jede Entität je Melder mit `false` abwählbar. Das Verhalten der API im Betrieb prüft die Abnahme |
 | R7 | Ein Alarm kann übersehen werden, wenn die Brücke ausfällt oder Rahmen verliert | Brücke bleibt Zusatz. Ereignisse für Alarm und Verbindung zur Brücke in Home Assistant überwachen |
-| R8 | Das eigene RM hängt nach dem Einlernen eines anderen Knotens | Watchdog: bleibt `46` mehrfach aus, Hinweis im Status. Ein automatischer Neustart des RM braucht eine schaltbare Versorgung |
+| R8 | Das eigene RM hängt nach dem Einlernen eines anderen Knotens | Watchdog: bleibt `46` mehrfach aus, Hinweis im Status. Ein automatischer Neustart des RM braucht eine schaltbare Versorgung. Umgesetzt am 18.10.2026: Drei Befehle in Folge ohne Quittung `46` oder mit Sendefehler setzen (bei lokalen Befehlen zählt auch das Zeitlimit der Antwort) den Modulstatus auf „keine Antwort“ und loggen eine Warnung mit dem Hinweis, die Versorgung kurz zu trennen. Jede andere Antwort des Moduls setzt den Zähler zurück; Fehlversuche beim Init zählen nicht mit |
 | R9 | Die Brücke wird nach dem Init zum Empfänger aller Hostantworten. Ob das andere Abfragende stört, ist offen | bei den Tests von Stufe 2 beobachten, im Zweifel E2 neu entscheiden |
 | R10 | Mit Klasse `FF` blinkt die LED des Funkmoduls vermutlich alle paar Sekunden | bekannt und beabsichtigt |
 | R11 | Netztest und Diagnose lösen ohne Rückfrage aus, auch über Home-Assistant-Automationen | bekannt und beabsichtigt; Funktionen per YAML zuschaltbar, jede Auslösung im Log und als Ereignis |
@@ -440,6 +440,13 @@ Getroffen am 11.10.2026.
 Hardware-Abnahme mit der Firmware von Stufe 3 (Abschnitt 3) fortsetzen. Geprüft sind Zuordnung, „Status aktualisieren“, Sockel-Entnahme, Ereignisse, die übernommene YAML-Vorlage mit 19 Meldern und eine vollständige Runde „Netzdetails“ mit 240 s. Offen: aus Stufe 2 „Rediscover Network“ in einem Lauf; für Stufe 3 „nicht zugeordnete Melder“ leer mit der neuen Firmware, Melder als Geräte in Home Assistant prüfen und die Testtaste an einem Melder. Die Testtaste schließt zugleich die Abnahme von Stufe 1 ab.
 
 Stufe 4: Netztest auf der Hardware abnehmen. Erwartet im Log: `Sende 70 A5 B8 14 FF 01 11 03 7E`, `46`, `41`, `91`, danach ertönen alle Melder. Zu beobachten: ob die Melder mit eigenen `70` antworten und ob die Brücke Kopien ihres eigenen `70` erhält. Für den Test je Melder den Mitschnitt aus P21 machen.
+
+Neu umgesetzt am 18.10.2026, auf der Hardware abzunehmen:
+
+- Periodische Abfragen (E5) mit `auto_discovery: true`: 15 min nach dem Start beginnt die Planung. Die Abfragen verteilen sich gleichmäßig über das Intervall, je Zeitpunkt eine: bei 21 SIDs etwa alle 54 min ein `D3 06`, bei 19 Meldern etwa alle 76 min ein `C7`. Zu prüfen: Werte in Home Assistant aktualisieren sich, die Warteschlange bleibt frei für Handabfragen, nach 19 h bzw. 24 h folgt die nächste Runde. `72` folgt ereignisgesteuert nach einem `71` mit Flag 0x02.
+- Zähler `remote_requests`: steigt je quittierter Fernanfrage um 1. Eine Runde „Netzdetails“ erhöht ihn um die Zahl der gesendeten Abfragen.
+- Watchdog: Im Normalbetrieb bleibt der Modulstatus „bereit“. Ein hängendes Modul (etwa nach dem Einlernen eines anderen Knotens) zeigt nach drei Befehlen ohne Quittung „keine Antwort“ und die Warnung im Log; nach dem Trennen der Versorgung meldet das Log „Modul reagiert wieder“.
+- Schalter `raw_log_switch`: eingeschaltet erscheint je Rahmen eine Zeile `RX` oder `TX` unter `wisafe2.raw` mit Zeitstempel der Brücke, ausgeschaltet keine. Mit diesen Zeitstempeln die Gegenprobe zu P17 wiederholen.
 
 ## 9. Neue Erkenntnisse zum Protokoll
 
@@ -663,6 +670,7 @@ Beobachtung vom 13.10.2026, vermutet.
 - Gegenprobe: dieselbe Auswertung an einem längeren Log mit mehr Antworten.
 - Gegenprobe vom 13.10.2026, Log 08:10–08:35 über die native API: Die sieben Funkrahmen (`D4 10`, `D4 06`, `C8`, `73`, zweimal `71`, `70`) liegen modulo 0,5 s bei 0,013, 0,205, 0,304, 0,096, 0,058, 0,147 und 0,257 s. Zwischen `C8` und `73` von SID 26 liegen nur 21 s, die Phase springt dabei von 0,304 auf 0,096. Ein gemeinsames Raster zeigt dieses Log nicht. Die Vermutung bleibt offen; die Stichprobe ist klein, und die Zeitstempel vergibt der Log-Client beim Empfang über WLAN.
 - Nachtrag vom 13.10.2026, Log 10:55–12:59: Die Zeitstempel des Log-Clients streuen um bis zu 0,5 s. Die Quittung `46` steht meist in derselben Millisekunde wie die Zeile `Sende`, einmal aber 499 ms später (11:11:31,152 → 11:11:31,651). Einmal steht `Sende` nur 67 ms nach dem vorigen Rahmen, obwohl die Sendeplanung 500 ms Ruhe hält. Eine Auswertung auf ein Raster von 0,5 s ist mit diesen Zeitstempeln nicht möglich; dafür braucht es Zeitstempel der Brücke selbst.
+- Nachtrag vom 18.10.2026: Zeitstempel der Brücke liefert jetzt der Schalter `raw_log_switch`. Kern 1 stempelt jedes empfangene Byte mit dem µs-Zähler des Pico, die Rohzeile `RX` trägt die Zeit des letzten Bytes (`7E`). Die Gegenprobe folgt mit einem Log, in dem der Schalter eingeschaltet ist.
 
 ### P18: Das W2-MM sendet `70` mit der Gateway-ID
 
