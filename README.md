@@ -13,10 +13,11 @@ Umgesetzt sind Stufe 0 bis Stufe 3 des [Umsetzungsplans](doc/Protokoll-Umsetzung
 - Stufe 2: Melderregister mit allen Knoten, Netzerkundung und Netzdetails als getrennte Abläufe, Speicherung in `nodes.bin`. Auf der Hardware zum Teil abgenommen.
 - Stufe 3: Melder als Geräte in Home Assistant mit Entitäten je Melder, netzweiten Entitäten, Ereignissen und YAML-Vorlage. Die Abnahme auf der Hardware läuft: Zuordnung, Sockel-Entnahme, Ereignisse und „Status aktualisieren“ arbeiten.
 - Stufe 4, Teil Netztest: Button, der alle Melder im Netz ertönen lässt (siehe [Netztest](#netztest)). Die Abnahme auf der Hardware steht aus.
+- Dazu ein Zähler der Fernanfragen, ein Watchdog für das Funkmodul (siehe [Sensoren und Status](#sensoren-und-status)) und ein Schalter, der jeden Rahmen roh mit Zeitstempel loggt (siehe [Rohrahmen](#rohrahmen)). Die Abnahme auf der Hardware steht aus.
 
 Beim Start hält Kern 1 nur IRQ auf Low. Die Kommunikation mit dem Modul beginnt erst, wenn ESPHome hochgefahren und das WLAN verbunden ist. 5 s danach, damit sich Log-Clients verbinden können, fordert Kern 0 die Einrichtung des SPI-Slaves an und sendet den Init-Befehl `D3 19 50 00`. Ohne Quittung `46` wiederholt Kern 0 den Befehl bis zu 50-mal im Abstand von etwa 0,5 s. Nach der Quittung meldet das Modul nach etwa 3 s `D4 10` und nimmt bis dahin keine Bytes an. Kern 0 wartet auf diesen Rahmen, höchstens 10 s, und fragt danach den Status des eigenen Funkmoduls (`D1`) und die lokale SID-Map (`D3 03`) ab. Beides sind lokale Abfragen ohne Funkverkehr. Danach erkundet die Brücke alle SIDs ohne Eintrag im Register (siehe [Melderregister und Netzerkundung](#melderregister-und-netzerkundung)). Der Button `init_button` startet den Init jederzeit neu.
 
-Kern 1 ist SPI-Slave und quittiert jedes empfangene Byte mit einem IRQ-Puls von 8 µs. Auf MISO liegt im Empfang `0x00`. Die empfangenen Bytes gehen über eine Warteschlange nach Kern 0.
+Kern 1 ist SPI-Slave und quittiert jedes empfangene Byte mit einem IRQ-Puls von 8 µs. Auf MISO liegt im Empfang `0x00`. Die empfangenen Bytes gehen über eine Warteschlange nach Kern 0, jedes mit dem Zeitpunkt seines Empfangs aus dem Systemtimer in µs.
 
 Kern 0 setzt daraus Rahmen bis `7E` zusammen:
 
@@ -121,6 +122,10 @@ wisafe2:
     name: "WiSafe2 Erkundung läuft"
   unassigned:
     name: "WiSafe2 nicht zugeordnete Melder"
+  remote_requests:
+    name: "WiSafe2 Fernanfragen"
+  raw_log_switch:
+    name: "WiSafe2 Rohrahmen loggen"
   detectors:
     - sid: 14
       device_id: "2FE43D"
@@ -161,8 +166,11 @@ Nach jedem `D2` vergleicht die Brücke die Geräte-ID im Modul mit `device_id`. 
 | `rm_firmware` | Firmware des Funkmoduls, etwa `EF` |
 | `rm_device_id` | Geräte-ID, die das Modul gelernt hat |
 | `rm_paired` | Modul gekoppelt |
+| `remote_requests` | Fernanfragen seit dem Start, die das Funkmodul mit `46` quittiert und damit ins Netz gesendet hat |
 
-Die Werte kommen aus `D2`, nach dem Start, auf Knopfdruck und unaufgefordert etwa stündlich.
+Die Werte der RM-Sensoren kommen aus `D2`, nach dem Start, auf Knopfdruck und unaufgefordert etwa stündlich.
+
+`remote_requests` zählt alle Funkbefehle der Brücke an das Netz: Init, Remote-Status, ID-Information, `C7`, `72`, `C5` und den Netztest, gleich ob von Hand, aus der Erkundung oder periodisch. Jede davon weckt Funkmodule im Netz und kostet dort Batterie. Antworten der Brücke auf Anfragen anderer Knoten zählen nicht mit. Der Sensor beginnt nach jedem Neustart bei 0; als `total_increasing` rechnet Home Assistant die Summe über Neustarts hinweg weiter.
 
 | Status | Bedeutung |
 | --- | --- |
@@ -171,7 +179,9 @@ Die Werte kommen aus `D2`, nach dem Start, auf Knopfdruck und unaufgefordert etw
 | `Modul bereit` | Init quittiert, Modul gekoppelt |
 | `ungekoppelt` | `D2` meldet SID `40` oder die lokale SID-Map ist leer |
 | `Geräte-ID weicht ab` | die Geräte-ID im Modul ist eine andere als `device_id` |
-| `keine Antwort` | Init nach 50 Versuchen ohne Quittung |
+| `keine Antwort` | Init nach 50 Versuchen ohne Quittung, oder das Modul hat auf drei Befehle in Folge nicht reagiert |
+
+Der Watchdog zählt Befehle, auf die das Modul gar nicht reagiert: keine Quittung `46`/`47` binnen 150 ms, kein Byte angenommen trotz aller Wiederholungen (etwa 60 s), oder keine Antwort auf eine lokale Abfrage wie `D1`. Bleibt nur die Antwort aus dem Netz aus, hat das Modul quittiert und zählt als erreichbar. Nach drei solchen Befehlen in Folge wechselt der Status auf `keine Antwort`, und das Log nennt den letzten Befehl. Das Funkmodul hängt dann vermutlich, etwa nach dem Einlernen eines anderen Knotens; hilft der Button `init_button` nicht, die Versorgung des Moduls kurz trennen. Die nächste Rückmeldung des Moduls stellt den Status wieder her.
 
 `rm_status_button` fragt den Status des eigenen Funkmoduls ab (`D1`), `sid_map_button` die lokale SID-Map (`D3 03`).
 
@@ -437,9 +447,24 @@ Hinweise zum Log-Client von ESPHome (`esphome logs`, Dashboard):
 - Zeilen mit `[S]` erzeugt der Log-Client selbst aus den Zustandsmeldungen der API. Den ersten Zustand jeder Entität nach dem Verbinden zeigt er nicht, weil er ihn für den Anfangsstand hält. Bei Event-Entitäten fehlt deshalb das erste Ereignis nach dem Verbinden als `[S][event]`-Zeile; Home Assistant erhält es trotzdem. Die Zeile `Ereignis: …` der Brücke erscheint jedes Mal.
 - Das Schreiben von `nodes.bin` dauert etwa 50 bis 140 ms, weil der Flash einen Sektor löschen muss. ESPHome meldet ab 50 ms `wisafe2 took a long time for an operation` und hebt die Schwelle danach selbst an. Die Warnung ist erwartet.
 
+### Rohrahmen
+
+Der Eintrag `raw_log_switch` legt einen Schalter an. Eingeschaltet schreibt die Brücke jeden Rahmen in beide Richtungen zusätzlich als Zeile mit dem Tag `wisafe2.raw` ins Log, vor der gedeuteten Zeile:
+
+```text
+[wisafe2.raw] TX 1236.104210 s (+1.537012 s) D3 06 0E 00 7E
+[wisafe2.raw] RX 1236.165870 s (+0.061660 s) 46 7E
+[wisafe2.raw] RX 1257.330114 s (+21.164244 s) D4 06 0E 64 8C 8C 7D 02 EF 3D E4 2F 00 00 7E
+```
+
+- Die Zeit zählt in Sekunden seit dem Start des Pico, auf die Mikrosekunde. Kern 1 nimmt sie aus dem Systemtimer: beim Empfang am Ende des Bytes `7E`, beim Senden am Ende des letzten Bytes. Damit hängt sie weder an der Hauptschleife noch am WLAN; der Abstand in Klammern bezieht sich auf die vorige Rohzeile.
+- Die Bytes stehen wie auf der Leitung, also maskiert, mit `7E` und mit führenden Füllbytes `00`.
+- Sendeversuche, bei denen das Modul kein Byte angenommen hat, erscheinen nicht. Bricht ein Befehl ab, steht der Grund am Ende, etwa `(abgebrochen nach 1 Bytes: Modul taktet nicht)`. Rahmen ohne `7E` enden mit `(ohne 7E, Zeitlimit)`.
+- Nach einem Neustart ist der Schalter aus. Mit `restore_mode: RESTORE_DEFAULT_OFF` übernimmt er den Zustand vor dem Neustart, mit `ALWAYS_ON` ist er immer an.
+
 ## Tests
 
-Rahmenschicht, Nachrichten, Modelltabellen, Duplikatfilter, Antworten des Hosts, Rahmen des Netztests, Sendeplanung, Melderregister mit `nodes.bin`-Format, Erkundung, Netzdetails, Zustände und Texte der Melder-Entitäten, YAML-Vorlage und Log-Text lassen sich ohne Hardware auf dem PC prüfen:
+Rahmenschicht, Nachrichten, Modelltabellen, Duplikatfilter, Antworten des Hosts, Rahmen des Netztests, Sendeplanung mit Zähler der Fernanfragen und Watchdog, Rohzeilen, Melderregister mit `nodes.bin`-Format, Erkundung, Netzdetails, Zustände und Texte der Melder-Entitäten, YAML-Vorlage und Log-Text lassen sich ohne Hardware auf dem PC prüfen:
 
 ```sh
 make -C tests/host
