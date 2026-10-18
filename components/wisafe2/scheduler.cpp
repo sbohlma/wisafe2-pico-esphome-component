@@ -146,6 +146,9 @@ void Scheduler::start_(const Request &request, uint32_t now_ms) {
 }
 
 void Scheduler::acknowledged_(uint32_t now_ms) {
+  if (this->active_.kind == RequestKind::Remote) {
+    this->remote_sent_++;
+  }
   if (this->active_.reply_len == 0) {
     this->finish_active_(Outcome::Ok, nullptr);
     return;
@@ -305,6 +308,28 @@ void Scheduler::service(uint32_t now_ms, bool receiving) {
     this->start_(request, now_ms);
     return;
   }
+}
+
+bool module_silent(RequestKind kind, Outcome outcome) {
+  switch (outcome) {
+    case Outcome::NoAck:
+    case Outcome::SendFailed:
+      return true;
+    case Outcome::Timeout:
+      return kind == RequestKind::Local;
+    default:
+      return false;
+  }
+}
+
+bool ModuleWatchdog::on_outcome(RequestKind kind, Outcome outcome) {
+  const bool was = this->stalled();
+  if (!module_silent(kind, outcome)) {
+    this->misses_ = 0;
+  } else if (this->misses_ < 255) {
+    this->misses_++;
+  }
+  return was != this->stalled();
 }
 
 }  // namespace wisafe2

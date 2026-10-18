@@ -162,6 +162,32 @@ void test_describe() {
   CHECK(std::strlen(text) < sizeof(text));
 }
 
+void test_raw_line() {
+  char text[200];
+  const uint8_t ack[] = {0x46, 0x7E};
+  format_raw_line("RX", 1234567890ull, false, 0, ack, sizeof(ack), false, nullptr, text, sizeof(text));
+  CHECK(std::strcmp(text, "RX 1234.567890 s 46 7E") == 0);
+
+  // Maskiert wie auf der Leitung, mit führendem Füllbyte.
+  const uint8_t masked[] = {0x00, 0x70, 0x7D, 0x01, 0x7E};
+  format_raw_line("RX", 5000001ull, true, 512345, masked, sizeof(masked), false, nullptr, text, sizeof(text));
+  CHECK(std::strcmp(text, "RX 5.000001 s (+0.512345 s) 00 70 7D 01 7E") == 0);
+
+  const uint8_t d1[] = {0xD1, 0x7E};
+  format_raw_line("TX", 90000000000ull, true, -1500, d1, 1, false, "abgebrochen nach 1 Bytes: CS belegt", text,
+                  sizeof(text));
+  CHECK(std::strcmp(text, "TX 90000.000000 s (-0.001500 s) D1 (abgebrochen nach 1 Bytes: CS belegt)") == 0);
+
+  format_raw_line("RX", 1000000ull, true, 2000000, ack, 1, true, "ohne 7E, Zeitlimit", text, sizeof(text));
+  CHECK(std::strcmp(text, "RX 1.000000 s (+2.000000 s) 46 … (ohne 7E, Zeitlimit)") == 0);
+
+  // Ein zu kleiner Puffer endet sauber mit 0.
+  char small[24];
+  format_raw_line("RX", 1000000ull, true, 0, masked, sizeof(masked), false, nullptr, small, sizeof(small));
+  CHECK(std::strlen(small) < sizeof(small));
+  CHECK_STR_CONTAINS(small, "RX 1.000000 s");
+}
+
 }  // namespace
 
 void run_message_tests() {
@@ -171,4 +197,5 @@ void run_message_tests() {
   test_device_id_text();
   test_battery();
   test_describe();
+  test_raw_line();
 }

@@ -419,6 +419,84 @@ void test_queue_limits() {
   CHECK_EQ(f.scheduler.pending(), 0);
 }
 
+void test_remote_sent_counter() {
+  Fixture f;
+  CHECK_EQ(f.scheduler.remote_sent(), 0);
+
+  // Quittiert, auch wenn die Antwort aus dem Netz danach ausbleibt.
+  f.scheduler.enqueue(Request::remote(1, REMOTE_STATUS, sizeof(REMOTE_STATUS), REMOTE_STATUS_PREFIX, 3));
+  f.scheduler.service(f.now, false);
+  f.sent_ok();
+  f.frame({0x46});
+  CHECK_EQ(f.scheduler.remote_sent(), 1);
+  f.advance(REMOTE_REPLY_TIMEOUT_MS + 10);
+  CHECK(f.results.back().outcome == Outcome::Timeout);
+  CHECK_EQ(f.scheduler.remote_sent(), 1);
+
+  // 46 vor der Sendemeldung von Kern 1.
+  f.scheduler.enqueue(Request::remote(2, INIT, sizeof(INIT)));
+  f.advance(QUIET_MS);
+  f.frame({0x46});
+  f.sent_ok();
+  CHECK_EQ(f.scheduler.remote_sent(), 2);
+
+  // Abgelehnt oder ohne Quittung zählt nicht.
+  f.scheduler.enqueue(Request::remote(3, REMOTE_STATUS, sizeof(REMOTE_STATUS), REMOTE_STATUS_PREFIX, 3));
+  f.advance(QUIET_MS);
+  f.sent_ok();
+  f.frame({0x47});
+  f.scheduler.enqueue(Request::remote(4, INIT, sizeof(INIT)));
+  f.advance(QUIET_MS);
+  f.sent_ok();
+  f.advance(ACK_TIMEOUT_MS + 10);
+  CHECK(f.results.back().outcome == Outcome::NoAck);
+  CHECK_EQ(f.scheduler.remote_sent(), 2);
+
+  // Hostantworten mit Quittung sind Antworten, keine Anfragen.
+  const uint8_t c4[] = {0xC4, 0xA5, 0xB8, 0x14, 0xFF, 0x11, 0x03};
+  f.scheduler.enqueue(Request::host_reply(5, c4, sizeof(c4), true));
+  f.scheduler.service(f.now, false);
+  f.sent_ok();
+  f.frame({0x46});
+  CHECK(f.results.back().outcome == Outcome::Ok);
+  CHECK_EQ(f.scheduler.remote_sent(), 2);
+}
+
+void test_module_silent() {
+  CHECK(module_silent(RequestKind::Remote, Outcome::NoAck));
+  CHECK(module_silent(RequestKind::HostReply, Outcome::NoAck));
+  CHECK(module_silent(RequestKind::Local, Outcome::SendFailed));
+  CHECK(module_silent(RequestKind::Local, Outcome::Timeout));
+  CHECK(!module_silent(RequestKind::Remote, Outcome::Timeout));
+  CHECK(!module_silent(RequestKind::Remote, Outcome::Unreachable));
+  CHECK(!module_silent(RequestKind::Remote, Outcome::Rejected));
+  CHECK(!module_silent(RequestKind::Local, Outcome::Ok));
+}
+
+void test_module_watchdog() {
+  ModuleWatchdog watchdog;
+  CHECK(!watchdog.stalled());
+  CHECK(!watchdog.on_outcome(RequestKind::Remote, Outcome::NoAck));
+  CHECK(!watchdog.on_outcome(RequestKind::Local, Outcome::Timeout));
+  CHECK_EQ(watchdog.misses(), 2);
+  // Eine Rückmeldung dazwischen setzt den Zähler zurück.
+  CHECK(!watchdog.on_outcome(RequestKind::Remote, Outcome::Timeout));
+  CHECK_EQ(watchdog.misses(), 0);
+
+  for (uint8_t miss = 1; miss < MODULE_STALL_LIMIT; ++miss) {
+    CHECK(!watchdog.on_outcome(RequestKind::Local, Outcome::SendFailed));
+  }
+  CHECK(!watchdog.stalled());
+  CHECK(watchdog.on_outcome(RequestKind::Remote, Outcome::NoAck));
+  CHECK(watchdog.stalled());
+  // Weitere Ausfälle ändern den Zustand nicht mehr.
+  CHECK(!watchdog.on_outcome(RequestKind::Remote, Outcome::NoAck));
+  CHECK(watchdog.stalled());
+  CHECK(watchdog.on_outcome(RequestKind::Remote, Outcome::Rejected));
+  CHECK(!watchdog.stalled());
+  CHECK_EQ(watchdog.misses(), 0);
+}
+
 }  // namespace
 
 void run_scheduler_tests() {
@@ -443,4 +521,7 @@ void run_scheduler_tests() {
   test_masking_on_send();
   test_waits_while_receiving();
   test_queue_limits();
+  test_remote_sent_counter();
+  test_module_silent();
+  test_module_watchdog();
 }

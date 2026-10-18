@@ -373,5 +373,33 @@ void describe_frame(const Frame &frame, char *out, size_t out_len, bool raw_suff
   append_hex_frame(out, out_len, frame.data, frame.len);
 }
 
+void format_raw_line(const char *direction, uint64_t us, bool have_delta, int64_t delta_us, const uint8_t *bytes,
+                     size_t len, bool truncated, const char *note, char *out, size_t out_len) {
+  if (out_len == 0) {
+    return;
+  }
+  // Ohne 64-Bit-Formate: printf der Pico-Toolchain kennt %llu nicht sicher.
+  int used = std::snprintf(out, out_len, "%s %lu.%06lu s", direction, static_cast<unsigned long>(us / 1000000u),
+                           static_cast<unsigned long>(us % 1000000u));
+  if (have_delta && used > 0 && static_cast<size_t>(used) < out_len) {
+    const char sign = delta_us < 0 ? '-' : '+';
+    const uint64_t magnitude = delta_us < 0 ? static_cast<uint64_t>(-delta_us) : static_cast<uint64_t>(delta_us);
+    used += std::snprintf(out + used, out_len - used, " (%c%lu.%06lu s)", sign,
+                          static_cast<unsigned long>(magnitude / 1000000u),
+                          static_cast<unsigned long>(magnitude % 1000000u));
+  }
+  for (size_t index = 0; index < len && used > 0 && static_cast<size_t>(used) + 4 <= out_len; ++index) {
+    used += std::snprintf(out + used, out_len - used, " %02X", bytes[index]);
+  }
+  if (truncated) {
+    append_text(out, out_len, " …");
+  }
+  if (note != nullptr && note[0] != '\0') {
+    append_text(out, out_len, " (");
+    append_text(out, out_len, note);
+    append_text(out, out_len, ")");
+  }
+}
+
 }  // namespace wisafe2
 }  // namespace esphome

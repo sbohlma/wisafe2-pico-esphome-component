@@ -29,6 +29,8 @@ static constexpr uint32_t SEND_TIMEOUT_MS = 1000;
 // mindestens 500 ms, also etwa 60 s.
 static constexpr uint8_t SEND_ATTEMPTS = 120;
 static constexpr uint32_t SEND_RETRY_DELAY_MS = 500;
+// R8: So viele Befehle in Folge ohne Rückmeldung des Moduls, dann gilt es als hängend.
+static constexpr uint8_t MODULE_STALL_LIMIT = 3;
 
 enum class RequestKind : uint8_t {
   HostReply,  // Antwort an das RM, etwa 91 auf 41; sofort, vor allen anderen
@@ -133,6 +135,8 @@ class Scheduler {
   bool busy() const { return this->phase_ != Phase::Idle; }
   bool remote_open() const { return this->remote_open_; }
   size_t pending() const { return this->host_count_ + this->queue_count_; }
+  // R1: Fernanfragen, die das Modul seit dem Start mit 46 quittiert hat, also ins Netz gesendet hat.
+  uint32_t remote_sent() const { return this->remote_sent_; }
 
  protected:
   enum class Phase : uint8_t { Idle, Sending, AwaitAck, AwaitReply };
@@ -171,6 +175,24 @@ class Scheduler {
 
   bool hold_{false};
   uint32_t hold_until_ms_{0};
+
+  uint32_t remote_sent_{0};
+};
+
+// true, wenn das Modul auf den Befehl gar nicht reagiert hat: keine Quittung, nicht gesendet oder bei einer lokalen
+// Abfrage keine Antwort. Bleibt nur die Antwort aus dem Netz aus, hat das Modul mit 46 quittiert.
+bool module_silent(RequestKind kind, Outcome outcome);
+
+// R8: Zählt Befehle in Folge ohne Rückmeldung des Moduls. Jede Rückmeldung setzt den Zähler zurück.
+class ModuleWatchdog {
+ public:
+  // true, wenn sich stalled() dadurch ändert.
+  bool on_outcome(RequestKind kind, Outcome outcome);
+  bool stalled() const { return this->misses_ >= MODULE_STALL_LIMIT; }
+  uint8_t misses() const { return this->misses_; }
+
+ protected:
+  uint8_t misses_{0};
 };
 
 }  // namespace wisafe2
