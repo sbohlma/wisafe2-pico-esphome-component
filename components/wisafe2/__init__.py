@@ -1,6 +1,6 @@
 from esphome import automation
 import esphome.codegen as cg
-from esphome.components import binary_sensor, button, event, sensor, text_sensor
+from esphome.components import binary_sensor, button, event, sensor, switch, text_sensor
 import esphome.config_validation as cv
 from esphome.const import (
     CONF_DEVICE,
@@ -19,13 +19,14 @@ from esphome.const import (
     ENTITY_CATEGORY_CONFIG,
     ENTITY_CATEGORY_DIAGNOSTIC,
     STATE_CLASS_MEASUREMENT,
+    STATE_CLASS_TOTAL_INCREASING,
     UNIT_MILLIVOLT,
     UNIT_VOLT,
 )
 from esphome.core import CORE
 import esphome.final_validate as fv
 
-AUTO_LOAD = ["binary_sensor", "button", "event", "network", "sensor", "text_sensor"]
+AUTO_LOAD = ["binary_sensor", "button", "event", "network", "sensor", "switch", "text_sensor"]
 
 wisafe2_ns = cg.esphome_ns.namespace("wisafe2")
 WiSafe2Component = wisafe2_ns.class_("WiSafe2Component", cg.Component)
@@ -40,6 +41,7 @@ WiSafe2RegistryLogButton = wisafe2_ns.class_("WiSafe2RegistryLogButton", button.
 WiSafe2TemplateButton = wisafe2_ns.class_("WiSafe2TemplateButton", button.Button)
 WiSafe2NetworkTestButton = wisafe2_ns.class_("WiSafe2NetworkTestButton", button.Button)
 WiSafe2RefreshButton = wisafe2_ns.class_("WiSafe2RefreshButton", button.Button)
+WiSafe2RawLogSwitch = wisafe2_ns.class_("WiSafe2RawLogSwitch", switch.Switch, cg.Component)
 Detector = wisafe2_ns.class_("Detector")
 QueryRemoteStatusAction = wisafe2_ns.class_("QueryRemoteStatusAction", automation.Action)
 QueryIdentityAction = wisafe2_ns.class_("QueryIdentityAction", automation.Action)
@@ -78,6 +80,8 @@ CONF_UNASSIGNED = "unassigned"
 CONF_NETWORK_EVENT = "network_event"
 CONF_TEMPLATE_BUTTON = "template_button"
 CONF_NETWORK_TEST_BUTTON = "network_test_button"
+CONF_REMOTE_REQUESTS = "remote_requests"
+CONF_RAW_LOG_SWITCH = "raw_log_switch"
 
 # Wie event_type() in node_view.cpp.
 EVENT_TYPES = ["alarm", "alarm_ende", "stummschaltung", "test", "fehlerbericht"]
@@ -453,6 +457,20 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Optional(CONF_NETWORK_EVENT): event.event_schema(
             icon="mdi:bell-ring-outline",
         ),
+        # R1: Fernanfragen seit dem Start, die das RM mit 46 quittiert hat.
+        cv.Optional(CONF_REMOTE_REQUESTS): sensor.sensor_schema(
+            accuracy_decimals=0,
+            icon="mdi:counter",
+            state_class=STATE_CLASS_TOTAL_INCREASING,
+            entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+        ),
+        # Nach einem Neustart aus, solange restore_mode nichts anderes sagt.
+        cv.Optional(CONF_RAW_LOG_SWITCH): switch.switch_schema(
+            WiSafe2RawLogSwitch,
+            icon="mdi:text-box-search-outline",
+            entity_category=ENTITY_CATEGORY_CONFIG,
+            default_restore_mode="ALWAYS_OFF",
+        ).extend(cv.COMPONENT_SCHEMA),
         cv.Optional(CONF_DETECTORS, default=[]): cv.All(
             cv.ensure_list(detector_schema), unique_detectors
         ),
@@ -531,6 +549,7 @@ async def to_code(config):
         CONF_RM_RSSI: var.set_rm_rssi_sensor,
         CONF_RM_RADIO_FAULTS: var.set_rm_radio_faults_sensor,
         CONF_NODE_COUNT: var.set_node_count_sensor,
+        CONF_REMOTE_REQUESTS: var.set_remote_requests_sensor,
     }
     for key, setter in sensors.items():
         if key in config:
@@ -571,6 +590,10 @@ async def to_code(config):
             cg.add(btn.set_parent(var))
     if CONF_SPI_BUTTON in config:
         await button.new_button(config[CONF_SPI_BUTTON])
+    if CONF_RAW_LOG_SWITCH in config:
+        sw = await switch.new_switch(config[CONF_RAW_LOG_SWITCH])
+        await cg.register_component(sw, config[CONF_RAW_LOG_SWITCH])
+        cg.add(sw.set_parent(var))
 
 
 SID_SCHEMA = cv.Schema(

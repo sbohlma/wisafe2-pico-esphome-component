@@ -8,6 +8,7 @@
 #include "esphome/components/network/util.h"
 #include "esphome/core/hal.h"
 #include "esphome/core/log.h"
+#include "hardware/timer.h"
 
 #include <cmath>
 #include <cstdio>
@@ -18,6 +19,7 @@ namespace esphome {
 namespace wisafe2 {
 
 static const char *const TAG = "wisafe2";
+static const char *const RAW_TAG = "wisafe2.raw";
 
 static constexpr uint8_t INIT_PAYLOAD[] = {0xD3, 0x19, 0x50, 0x00};
 static constexpr uint8_t RM_STATUS_PAYLOAD[] = {0xD1};
@@ -66,7 +68,9 @@ void WiSafe2Component::publish_status_(const char *status) {
 }
 
 void WiSafe2Component::update_module_status_() {
-  if (!this->paired_) {
+  if (this->watchdog_.stalled()) {
+    this->publish_status_(STATUS_NO_REPLY);
+  } else if (!this->paired_) {
     this->publish_status_(STATUS_UNPAIRED);
   } else if (this->id_mismatch_) {
     this->publish_status_(STATUS_ID_MISMATCH);
@@ -87,6 +91,9 @@ bool WiSafe2Component::send_bytes(const uint8_t *bytes, size_t len, uint8_t &id)
     return false;
   }
   id = command_id;
+  std::memcpy(this->raw_tx_, bytes, len);
+  this->raw_tx_len_ = static_cast<uint8_t>(len);
+  this->raw_tx_id_ = command_id;
   char text[ipc::Command::MAX_LEN * 3 + 1];
   size_t used = 0;
   for (size_t index = 0; index < len && used + 4 <= sizeof(text); ++index) {
@@ -374,6 +381,86 @@ void WiSafe2Component::report_network_test_(const Completion &completion) {
   if (this->last_event_sensor_ != nullptr) {
     this->last_event_sensor_->publish_state("Netztest: von der Brücke ausgelöst, alle Melder ertönen");
   }
+}
+
+void WiSafe2Component::publish_remote_requests_() {
+  const uint32_t sent = this->scheduler_.remote_sent();
+  if (this->remote_requests_sensor_ == nullptr || sent == this->remote_requests_published_) {
+    return;
+  }
+  this->remote_requests_published_ = sent;
+  this->remote_requests_sensor_->publish_state(static_cast<float>(sent));
+}
+
+void WiSafe2Component::set_raw_log(bool enabled) {
+  if (enabled == this->raw_log_) {
+    return;
+  }
+  this->raw_log_ = enabled;
+  this->raw_rx_len_ = 0;
+  this->raw_rx_truncated_ = false;
+  this->raw_have_last_ = false;
+  ESP_LOGI(TAG, "Rohrahmen loggen: %s", enabled ? "an" : "aus");
+}
+
+// Kern 1 liefert das untere Wort des Systemtimers; der Abstand zu jetzt ist kürzer als ein Überlauf (71 min).
+static uint64_t extend_us(uint32_t us) {
+  const uint64_t now = time_us_64();
+  return now - static_cast<uint32_t>(static_cast<uint32_t>(now) - us);
+}
+
+void WiSafe2Component::log_raw_(const char *direction, uint64_t us, const uint8_t *bytes, size_t len, bool truncated,
+                                const char *note) {
+  const int64_t delta = static_cast<int64_t>(us - this->raw_last_us_);
+  char text[ipc::Command::MAX_LEN * 3 + RAW_RX_MAX * 3 + 64];
+  format_raw_line(direction, us, this->raw_have_last_, delta, bytes, len, truncated, note, text, sizeof(text));
+  ESP_LOGI(RAW_TAG, "%s", text);
+  this->raw_last_us_ = us;
+  this->raw_have_last_ = true;
+}
+
+void WiSafe2Component::collect_raw_rx_(uint8_t byte, uint32_t us) {
+  this->raw_rx_last_us_ = us;
+  if (this->raw_rx_len_ < RAW_RX_MAX) {
+    this->raw_rx_[this->raw_rx_len_++] = byte;
+  } else {
+    this->raw_rx_truncated_ = true;
+  }
+}
+
+void WiSafe2Component::log_raw_rx_(FrameStatus status) {
+  const char *note = nullptr;
+  switch (status) {
+    case FrameStatus::Complete:
+      break;
+    case FrameStatus::Timeout:
+      note = "ohne 7E, Zeitlimit";
+      break;
+    case FrameStatus::Overflow:
+      note = "zu lang";
+      break;
+    case FrameStatus::BadEscape:
+      note = "ungültige Maskierung";
+      break;
+  }
+  this->log_raw_("RX", extend_us(this->raw_rx_last_us_), this->raw_rx_, this->raw_rx_len_, this->raw_rx_truncated_,
+                 note);
+  this->raw_rx_len_ = 0;
+  this->raw_rx_truncated_ = false;
+}
+
+void WiSafe2Component::log_raw_tx_(const ipc::CommandResult &result) {
+  // Versuche ohne angenommenes Byte (Sperrzeit des Moduls) erscheinen nicht; sie hat das Modul nie gesehen.
+  if (result.id != this->raw_tx_id_ || result.sent == 0) {
+    return;
+  }
+  char note[48] = "";
+  if (!result.ok) {
+    std::snprintf(note, sizeof(note), "abgebrochen nach %u Bytes: %s", static_cast<unsigned>(result.sent),
+                  ipc::send_error_name(result.error));
+  }
+  const size_t len = result.sent < this->raw_tx_len_ ? result.sent : this->raw_tx_len_;
+  this->log_raw_("TX", extend_us(result.done_us), this->raw_tx_, len, false, note);
 }
 
 void WiSafe2Component::assign_detectors_() {
@@ -742,8 +829,28 @@ void WiSafe2Component::report_query_(const Completion &completion) {
   this->publish_last_reply_(text);
 }
 
+void WiSafe2Component::note_module_outcome_(const Completion &completion) {
+  // Der Init wiederholt sich in der Sperrzeit nach dem Start selbst; erst seine Quittung zählt.
+  if (completion.request.tag == TAG_INIT && completion.outcome != Outcome::Ok) {
+    return;
+  }
+  if (!this->watchdog_.on_outcome(completion.request.kind, completion.outcome)) {
+    return;
+  }
+  if (this->watchdog_.stalled()) {
+    ESP_LOGW(TAG, "Modul reagiert auf %u Befehle in Folge nicht (zuletzt %02X: %s). Das Funkmodul hängt "
+                  "vermutlich; Abhilfe: Versorgung kurz trennen",
+             static_cast<unsigned>(this->watchdog_.misses()), completion.request.payload[0],
+             outcome_name(completion.outcome));
+  } else {
+    ESP_LOGI(TAG, "Modul reagiert wieder");
+  }
+  this->update_module_status_();
+}
+
 void WiSafe2Component::handle_completion_(const Completion &completion) {
   const Request &request = completion.request;
+  this->note_module_outcome_(completion);
   switch (request.tag) {
     case TAG_INIT:
       this->init_pending_ = false;
@@ -1012,19 +1119,32 @@ void WiSafe2Component::loop() {
       ESP_LOGW(TAG, "Kern 1: Befehl nach %u Bytes abgebrochen (%s)", static_cast<unsigned>(result.sent),
                ipc::send_error_name(result.error));
     }
+    if (this->raw_log_) {
+      this->log_raw_tx_(result);
+    }
     this->scheduler_.on_send_result(result.id, result.ok, result.sent, now);
   }
 
   Frame frame;
   uint8_t byte = 0;
-  while (ipc::poll_spi_byte(byte)) {
+  uint32_t byte_us = 0;
+  while (ipc::poll_spi_byte(byte, byte_us)) {
     now = millis();
+    if (this->raw_log_) {
+      this->collect_raw_rx_(byte, byte_us);
+    }
     if (this->decoder_.feed(byte, now, frame)) {
+      if (this->raw_log_) {
+        this->log_raw_rx_(frame.status);
+      }
       this->handle_frame_(frame, now);
     }
   }
   now = millis();
   if (this->decoder_.poll_timeout(now, frame)) {
+    if (this->raw_log_) {
+      this->log_raw_rx_(frame.status);
+    }
     this->handle_frame_(frame, now);
   }
 
@@ -1051,6 +1171,7 @@ void WiSafe2Component::loop() {
       break;
   }
   this->publish_entities_(now);
+  this->publish_remote_requests_();
   this->service_template_(now);
 }
 
@@ -1091,6 +1212,7 @@ void WiSafe2Component::dump_config() {
   LOG_TEXT_SENSOR("  ", "Letztes Ereignis", this->last_event_sensor_);
   LOG_TEXT_SENSOR("  ", "Nicht zugeordnete Melder", this->unassigned_sensor_);
   LOG_EVENT("  ", "Ereignis im Netz", this->network_event_);
+  LOG_SENSOR("  ", "Fernanfragen", this->remote_requests_sensor_);
   ESP_LOGCONFIG(TAG, "  Melder in der YAML: %u", static_cast<unsigned>(this->detectors_.size()));
   for (const Detector *detector : this->detectors_) {
     detector->dump_config("    ");

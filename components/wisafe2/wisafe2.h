@@ -1,5 +1,6 @@
 #pragma once
 
+#include "core_ipc.h"
 #include "detector.h"
 #include "discovery.h"
 #include "duplicate_filter.h"
@@ -49,6 +50,10 @@ class WiSafe2Component : public Component, public Transport {
   void set_last_event_sensor(text_sensor::TextSensor *sensor) { this->last_event_sensor_ = sensor; }
   void set_unassigned_sensor(text_sensor::TextSensor *sensor) { this->unassigned_sensor_ = sensor; }
   void set_network_event(event::Event *event) { this->network_event_ = event; }
+  // R1: Fernanfragen seit dem Start.
+  void set_remote_requests_sensor(sensor::Sensor *sensor) { this->remote_requests_sensor_ = sensor; }
+  // Schalter „Rohrahmen loggen“: jeder Rahmen in beide Richtungen mit Zeitstempel von Kern 1.
+  void set_raw_log(bool enabled);
 
   void setup() override;
   void loop() override;
@@ -139,6 +144,13 @@ class WiSafe2Component : public Component, public Transport {
   void report_network_test_(const Completion &completion);
   bool next_template_node_(const Node *&node);
   void service_template_(uint32_t now);
+  void note_module_outcome_(const Completion &completion);
+  void publish_remote_requests_();
+  void collect_raw_rx_(uint8_t byte, uint32_t us);
+  void log_raw_rx_(FrameStatus status);
+  void log_raw_tx_(const ipc::CommandResult &result);
+  void log_raw_(const char *direction, uint64_t us, const uint8_t *bytes, size_t len, bool truncated,
+                const char *note);
 
   Identity identity_{};
   bool auto_discovery_{false};
@@ -178,6 +190,23 @@ class WiSafe2Component : public Component, public Transport {
   bool network_test_pending_{false};
   bool network_test_used_{false};
   uint32_t network_test_ms_{0};
+
+  sensor::Sensor *remote_requests_sensor_{nullptr};
+  uint32_t remote_requests_published_{UINT32_MAX};
+  ModuleWatchdog watchdog_;
+
+  // Rohrahmen: Bytes vom Modul seit dem letzten Rahmenende, maskiert, samt führender Füllbytes.
+  static constexpr size_t RAW_RX_MAX = 48;
+  bool raw_log_{false};
+  uint8_t raw_rx_[RAW_RX_MAX]{};
+  uint8_t raw_rx_len_{0};
+  bool raw_rx_truncated_{false};
+  uint32_t raw_rx_last_us_{0};
+  uint8_t raw_tx_[ipc::Command::MAX_LEN]{};
+  uint8_t raw_tx_len_{0};
+  uint8_t raw_tx_id_{0};
+  uint64_t raw_last_us_{0};
+  bool raw_have_last_{false};
 
   FrameDecoder decoder_;
   Scheduler scheduler_{*this};

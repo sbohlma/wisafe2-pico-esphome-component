@@ -16,7 +16,7 @@ namespace wisafe2 {
 namespace ipc {
 
 SpscQueue<LogMessage, 8> core1_logs;
-SpscQueue<uint8_t, 256> spi_bytes;
+SpscQueue<SpiByte, 256> spi_bytes;
 SpscQueue<Command, 8> commands;
 SpscQueue<CommandResult, 8> command_results;
 std::atomic<uint32_t> dropped_logs{0};
@@ -46,7 +46,15 @@ bool poll_core1_log(char *out, size_t out_len) {
 
 uint32_t take_dropped_logs() { return dropped_logs.exchange(0, std::memory_order_relaxed); }
 
-bool poll_spi_byte(uint8_t &byte) { return spi_bytes.pop(byte); }
+bool poll_spi_byte(uint8_t &byte, uint32_t &us) {
+  SpiByte item{};
+  if (!spi_bytes.pop(item)) {
+    return false;
+  }
+  byte = item.byte;
+  us = item.us;
+  return true;
+}
 
 bool send_command(uint8_t id, const uint8_t *bytes, size_t len) {
   if (bytes == nullptr || len == 0 || len > Command::MAX_LEN) {
@@ -136,7 +144,7 @@ void __not_in_flash_func(preload_tx_zero)() {
 }
 
 void __not_in_flash_func(push_rx_byte)(uint8_t byte) {
-  if (!ipc::spi_bytes.push(byte)) {
+  if (!ipc::spi_bytes.push(ipc::SpiByte{byte, timer_hw->timerawl})) {
     spi_drop_pending = true;
   }
 }
@@ -213,7 +221,7 @@ ipc::SendError __not_in_flash_func(write_byte_to_radio)(uint8_t byte) {
 
 void __not_in_flash_func(finish_command)(ipc::SendError error) {
   ipc::command_results.push(
-      ipc::CommandResult{tx_command.id, tx_index, error == ipc::SendError::None, error});
+      ipc::CommandResult{tx_command.id, tx_index, error == ipc::SendError::None, error, timer_hw->timerawl});
   tx_active = false;
 }
 

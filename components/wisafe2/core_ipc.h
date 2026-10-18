@@ -97,15 +97,22 @@ inline const char *send_error_name(SendError error) {
   return "?";
 }
 
+// Zeitstempel in µs stammen aus dem unteren Wort des Systemtimers, den beide Kerne gemeinsam lesen.
 struct CommandResult {
   uint8_t id;
   uint8_t sent;
   bool ok;
   SendError error;
+  uint32_t done_us;  // Ende des letzten Bytes oder des Abbruchs
+};
+
+struct SpiByte {
+  uint8_t byte;
+  uint32_t us;  // Ende der Übertragung (CS High)
 };
 
 // SPI-Bytes: Kern 1 schreibt, Kern 0 liest.
-bool poll_spi_byte(uint8_t &byte);
+bool poll_spi_byte(uint8_t &byte, uint32_t &us);
 
 // Befehle: Kern 0 schreibt, Kern 1 sendet und meldet je Befehl ein Ergebnis zurück.
 bool send_command(uint8_t id, const uint8_t *bytes, size_t len);
