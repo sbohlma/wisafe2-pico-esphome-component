@@ -1,6 +1,6 @@
 # Umsetzungsplan: W2-Modulprotokoll auf der Pico-2-W-Brücke
 
-Stand: 21.10.2026, Entscheidungen E1–E12 getroffen, E3 und E7 überarbeitet, Stufe 0 umgesetzt und auf der Hardware abgenommen, Init-Sequenz korrigiert (Abschnitt 9), Stufe 1 bis auf die Testtaste abgenommen, Stufe 2 umgesetzt, nach der ersten Hardware-Prüfung überarbeitet (Zeitlimit, Erkundung und Netzdetails getrennt) und nach der zweiten nachgeschärft (Zeitlimit 240 s, Abfragen je Modell und Erreichbarkeit), Stufe 3 umgesetzt und in der Abnahme (zwei Hardware-Prüfungen ausgewertet), vollständige Runde „Netzdetails“ abgenommen, Netztest aus Stufe 4 umgesetzt, Zähler für Fernanfragen (R1), Watchdog für das Funkmodul (R8) und Schalter für Rohrahmen umgesetzt, periodische Abfragen auf der Hardware abgenommen. Grundlage ist [PROTOCOL_ANALYSIS_W2_MODULE.md](https://github.com/sbohlma/FireAngel/blob/main/wisafe-mm/docs/PROTOCOL_ANALYSIS_W2_MODULE.md) (im Folgenden „Protokollanalyse“) mit den dort genannten Quellen, vor allem NikNakks [fireangel-pro-connected-esphome](https://github.com/NikNakk/fireangel-pro-connected-esphome), Tho85s [ws2mqtt](https://github.com/Tho85/ws2mqtt) und [wisafe-mm](https://github.com/sbohlma/FireAngel/tree/main/wisafe-mm).
+Stand: 21.10.2026, Entscheidungen E1–E12 getroffen, E3 und E7 überarbeitet, Stufe 0 umgesetzt und auf der Hardware abgenommen, Init-Sequenz korrigiert (Abschnitt 9), Stufe 1 bis auf die Testtaste abgenommen, Stufe 2 umgesetzt, nach der ersten Hardware-Prüfung überarbeitet (Zeitlimit, Erkundung und Netzdetails getrennt) und nach der zweiten nachgeschärft (Zeitlimit 240 s, Abfragen je Modell und Erreichbarkeit), Stufe 3 umgesetzt und in der Abnahme (zwei Hardware-Prüfungen ausgewertet), vollständige Runde „Netzdetails“ abgenommen, Netztest aus Stufe 4 umgesetzt und abgenommen, Zähler für Fernanfragen (R1), Watchdog für das Funkmodul (R8) und Schalter für Rohrahmen umgesetzt, periodische Abfragen auf der Hardware abgenommen. Grundlage ist [PROTOCOL_ANALYSIS_W2_MODULE.md](https://github.com/sbohlma/FireAngel/blob/main/wisafe-mm/docs/PROTOCOL_ANALYSIS_W2_MODULE.md) (im Folgenden „Protokollanalyse“) mit den dort genannten Quellen, vor allem NikNakks [fireangel-pro-connected-esphome](https://github.com/NikNakk/fireangel-pro-connected-esphome), Tho85s [ws2mqtt](https://github.com/Tho85/ws2mqtt) und [wisafe-mm](https://github.com/sbohlma/FireAngel/tree/main/wisafe-mm).
 
 Ziel: Alle Melder im Netz erscheinen in ESPHome und Home Assistant mit Zustand, Fehlern, Batterie und Ereignissen. Diagnose und Netztest stehen als Funktionen bereit.
 
@@ -386,7 +386,11 @@ Umgesetzt am 13.10.2026: der Netztest.
 - Meldung: Log, `network_event` mit dem eigenen Typ `netztest`, `last_event` mit Text. Abgewiesene und gescheiterte Versuche stehen in `last_reply`.
 - Host-Test für den Rahmen; die Brücke hängt keine SID an, das RM ergänzt SID und Folge.
 
-Offen in Stufe 4: die Diagnose. Der Befehl an das RM, der `C1` an eine SID richtet, ist unbekannt, und `C1` wirkt bisher nur am WHT-630. Ein Test je Melder braucht den Funkrahmen hinter `>T sid` des W2-MM (P21).
+Abgenommen am 21.10.2026: Der Netztest der Brücke um 10:07:19 und 10:08:19 ließ alle Melder ertönen (Rückmeldung des Nutzers). Das W2-MM hörte das `70` von SID 20 mit Klasse `FF`, weitergeleitet von 20 RMs (P22).
+
+Umgesetzt am 21.10.2026: Ein `70` mit der Gateway-ID ist der Testbefehl `>T` des W2-MM (P21). Die Brücke führt es als „Testanforderung des W2-MM: SID 15“ im Log und in `last_event` und löst kein Ereignis `test` aus, weder je Melder noch netzweit. Eine Antwort sendet sie weiterhin nicht. Host-Test in `test_node_view.cpp`.
+
+Offen in Stufe 4: die Diagnose und der Test je Melder. Der Befehl an das RM, der `C1` oder `70` an eine einzelne SID richtet, ist unbekannt; `C1` wirkt bisher nur am WHT-630. Das RM im W2-MM kennt beide Befehle, denn `>T 1A` ließ SID 26 ertönen (P21). Ein Mitschnitt der SPI-Leitung im Dongle würde sie zeigen.
 
 ### Stufe 5 (später): Pairing-Assistent
 
@@ -447,16 +451,18 @@ Getroffen am 11.10.2026.
 
 Hardware-Abnahme mit der Firmware von Stufe 3 (Abschnitt 3) fortsetzen. Geprüft sind Zuordnung, „Status aktualisieren“, Sockel-Entnahme, Ereignisse, die übernommene YAML-Vorlage mit 19 Meldern und eine vollständige Runde „Netzdetails“ mit 240 s. Offen: aus Stufe 2 „Rediscover Network“ in einem Lauf; für Stufe 3 „nicht zugeordnete Melder“ leer mit der neuen Firmware, Melder als Geräte in Home Assistant prüfen und die Testtaste an einem Melder. Die Testtaste schließt zugleich die Abnahme von Stufe 1 ab.
 
-Stufe 4: Netztest auf der Hardware abnehmen. Erwartet im Log: `Sende 70 A5 B8 14 FF 01 11 03 7E`, `46`, `41`, `91`, danach ertönen alle Melder. Zu beobachten: ob die Melder mit eigenen `70` antworten und ob die Brücke Kopien ihres eigenen `70` erhält. Für den Test je Melder den Mitschnitt aus P21 machen. Am 21.10.2026 um 10:07:19 und 10:08:19 hörte das W2-MM den Netztest der Brücke (`70` von SID 20, Klasse `FF`), weitergeleitet von 20 RMs (P22). Offen: Haben alle Melder getönt? Das Log der Brücke beginnt erst um 10:13.
+Stufe 4: Der Netztest ist abgenommen, alle Melder haben getönt (Abschnitt 3, Stufe 4). Noch zu beobachten, mit einem Log der Brücke während des Tests: ob die Melder mit eigenen `70` antworten und ob die Brücke Kopien ihres eigenen `70` erhält. Für Diagnose und Test je Melder die SPI-Leitung im W2-MM mitschneiden (P21).
+
+Kontrollierte Wiederholung: Der Nutzer wiederholt die Eingabe `3E 79 14 40` mit folgendem `70` am W2-MM gezielt, jeweils mit Uhrzeit, damit Log und Funktion eindeutig zusammenpassen (P21). Vermutet wird ein simulierter Test.
 
 Umgesetzt am 18.10.2026, Stand der Abnahme:
 
 - Periodische Abfragen (E5) mit `auto_discovery: true`: abgenommen am 21.10.2026 (Abschnitt 3, Stufe 2, vierte Prüfung). Ein `D3 06` alle 54,3 min reihum über 21 SIDs, ein `C7` alle 80 min reihum über 18 Melder (ohne WHT-630), nächste Runde nach 19 h bzw. 24 h. `72` nach einem `71` mit Flag 0x02 kam im Mitschnitt nicht vor.
-- Zähler `remote_requests`: steigt je quittierter Fernanfrage um 1. Erwartet am 21.10.2026 um 10:13 nach 57 h Laufzeit: etwa 113 (Init, Erkundung von SID 16, rund 63 Remote-Status, 43 Batterieabfragen, „Status aktualisieren“ an SID 26 mit drei Abfragen, zwei Netztests). Das Log zeigt den Wert nicht, weil der Log-Client den ersten Zustand übergeht; den Wert in Home Assistant ablesen.
+- Zähler `remote_requests`: steigt je quittierter Fernanfrage um 1. Erwartet am 21.10.2026 um 10:13 nach 57 h Laufzeit: etwa 113 (Init, Erkundung von SID 16, rund 63 Remote-Status, 43 Batterieabfragen, „Status aktualisieren“ an SID 26 mit drei Abfragen, zwei Netztests). Das Log zeigt den Wert nicht, weil der Log-Client den ersten Zustand übergeht; den Wert in Home Assistant ablesen, als Zahl „WiSafe2 Fernanfragen“ im Bereich „Diagnose“ der Brücke.
 - Watchdog: Im Normalbetrieb bleibt der Modulstatus „bereit“. Ein hängendes Modul (etwa nach dem Einlernen eines anderen Knotens) zeigt nach drei Befehlen ohne Quittung „keine Antwort“ und die Warnung im Log; nach dem Trennen der Versorgung meldet das Log „Modul reagiert wieder“.
 - Schalter `raw_log_switch`: arbeitet laut Log vom 21.10.2026. Jede Rohzeile trägt die Zeit von Kern 1; die Brücke sendete `C2` 5,95 ms nach dem Empfang von `C1`, die Quittung `46` folgte 0,87 ms danach. Erste Stichprobe zum Zeitraster in P17; für eine belastbare Gegenprobe den Schalter während einer Runde „Netzdetails“ einschalten.
 
-Zu entscheiden: Der Testbefehl `>T` des W2-MM an die Brücke kommt als `70` mit der Gateway-ID an (P21). Die Brücke meldet ihn bisher als Ereignis `test` mit „Test bestanden: SID 15 (Gateway)“. Vorschlag: als „Testanforderung des W2-MM“ loggen und ohne Ereignis `test` behandeln, damit Automationen für Meldertests nicht auslösen. Eine Antwort sendet die Brücke weiterhin nicht.
+Entschieden und umgesetzt am 21.10.2026: Der Testbefehl `>T` des W2-MM an die Brücke kommt als `70` mit der Gateway-ID an (P21). Die Brücke meldete ihn bisher als Ereignis `test` mit „Test bestanden: SID 15 (Gateway)“. Jetzt führt sie ihn als „Testanforderung des W2-MM“ ohne Ereignis `test`, damit Automationen für Meldertests nicht auslösen (Abschnitt 3, Stufe 4). Eine Antwort sendet die Brücke weiterhin nicht.
 
 ## 9. Neue Erkenntnisse zum Protokoll
 
@@ -690,7 +696,7 @@ Beobachtung vom 13.10.2026, vermutet.
 Beobachtung vom 13.10.2026, einmal im Log, Deutung vermutet.
 
 - Um 08:35:12,757 kam `70 01 02 03 81 01 00 00 0F 02`: Test bestanden, Gerät `01 02 03` (Gateway-ID), Klasse `81` (Rauch), Modell `00 00`, SID 15, Folge 2.
-- SID 15 stand weder in der lokalen SID-Map dieses Laufs noch in `D4 10`. Nach P8 gehört SID 15 zum W2-MM-Service-Dongle. Vermutet: Das W2-MM meldet mit `70` einen eigenen Test oder einen Test, den es im Netz anstößt, und trägt dabei die Gateway-ID, wie Gateway-RMs beim Einlernen (`D4 09 00 01 02 03`).
+- SID 15 stand weder in der lokalen SID-Map dieses Laufs noch in `D4 10`. Nach P8 gehört SID 15 zum W2-MM-Service-Dongle. Vermutet: Das W2-MM meldet mit `70` einen eigenen Test oder einen Test, den es im Netz anstoßt, und trägt dabei die Gateway-ID, wie Gateway-RMs beim Einlernen (`D4 09 00 01 02 03`).
 - Modell 0 passt zu keinem Melder der Modelltabelle. Die Folgenummer 2 ist sehr klein, vermutlich kurz nach dem Einschalten des Dongles.
 - Die Brücke legte dafür einen Registerplatz „Gateway, außerhalb der SID-Map“ an und speicherte ihn in `nodes.bin`. Seit der Änderung nach der ersten Prüfung von Stufe 3 legen Nachrichten mit der Gateway-ID für SIDs ohne Platz keinen Eintrag mehr an. Ereignis und „letztes Ereignis“ kommen weiterhin, mit `(Gateway)` statt eines Meldernamens.
 - Offen: Was löste die Nachricht aus? Gegenprobe: am W2-MM gezielt einen Test starten und das Log mitschneiden.
@@ -732,10 +738,10 @@ Zusammenstellung vom 13.10.2026 aus den Quellen, im eigenen Netz noch ungeprüft
 - Nachtrag vom 21.10.2026, Mitschnitt mit wisafe-mm und Rohzeilen der Brücke (10:07–10:32):
   - `>T 14` (Test an SID 20, die Brücke), viermal: Die Brücke empfing jedes Mal binnen 6 s `70 01 02 03 81 01 00 00 0F seq`, im Log mit den Folgen `0B`, `0C` und `0E`; das erste kam vor Beginn des Logs, sichtbar am Abstand der ersten Rohzeile (etwa 10:13:51 → 10:13:54,988 und 10:25:03 → 10:25:04,069). Der Testbefehl ist also ein `70` mit der Geräte-ID des Dongles (P18), Klasse `81`, Ergebnis `01` und Modell 0. Ziel-SID und Ziel-Geräte-ID stehen nicht im Inhalt; das RM stellt den Rahmen wie `C1` dem Host des Ziels zu. Das W2-MM hörte dazu nur drei Weiterleitungen (SID 26, 0, 10), beim Netztest der Brücke 20.
   - Nach `>T` wartet das W2-MM etwa 90 s und meldet dann „Test Node: response timed out“. Die Brücke antwortet nicht. Vermutet: Ein Melder ertönt und meldet seinen Test mit einem eigenen `70`.
-  - `>T 1A` an SID 26 (ST-630-DE), dreimal: Es wurde weder ein `70` noch eine Antwort gehört; die ersten beiden endeten mit „response timed out“, beim dritten endet das Log. Offen: Hat SID 26 getönt?
+  - `>T 1A` an SID 26 (ST-630-DE), dreimal: Es wurde weder ein `70` noch eine Antwort gehört; die ersten beiden endeten mit „response timed out“, beim dritten endet das Log. SID 26 hat getönt (Rückmeldung des Nutzers). Ein Test je Melder ist also möglich und erreicht einen ST-630-DE, auch ohne dass ein Rahmen geflutet wird. Bestätigt.
   - `>D 14`, zweimal mit Antwort: Beim zweiten empfing die Brücke `C1 00 00 00 00 00 00 01 0F 0D` 4 s nach dem Befehl und antwortete nach 5,95 ms mit `C2 A5 B8 14 FF 11 03 01`. Das W2-MM zeigte „Diagnostics result … result 0x01“, weitergeleitet von 16 bis 17 RMs.
   - `>D 1A` an SID 26, zweimal: keine Antwort, wie für die ST-630-DE erwartet.
-  - Um 10:29 sandte das W2-MM von Hand `3E 79 14 40` und danach `70 A5 B8 14 FF 01 11 03`, den Netztest-Rahmen mit der Identität der Brücke. Er erschien im Netz mit SID 20 als Absender und sechs Weiterleitungen. Die Brücke meldete in dieser Zeit kein `70`. Die Bedeutung von `3E 79 14 40` ist offen.
+  - Um 10:29 sandte das W2-MM von Hand `3E 79 14 40` und danach `70 A5 B8 14 FF 01 11 03`, den Netztest-Rahmen mit der Identität der Brücke. Er erschien im Netz mit SID 20 als Absender und sechs Weiterleitungen. Die Brücke meldete in dieser Zeit kein `70`. Laut Nutzer war es ein Versuch mit wisafe-mm, möglicherweise ein simulierter Test. Die Bedeutung von `3E 79 14 40` bleibt offen, bis eine kontrollierte Wiederholung mit Uhrzeiten vorliegt.
   - Folgerung: Den Test je Melder kann die Brücke senden, sobald der Befehl an das RM bekannt ist, der ein `70` an eine einzelne SID richtet. Das RM im Dongle kennt ihn; ein Mitschnitt der SPI-Leitung zwischen Dongle-Host und Dongle-RM würde ihn zeigen.
 
 ### P22: Funknachrichten werden von fast allen RMs weitergeleitet
