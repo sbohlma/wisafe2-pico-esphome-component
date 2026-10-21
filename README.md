@@ -10,10 +10,10 @@ Umgesetzt sind Stufe 0 bis Stufe 3 des [Umsetzungsplans](doc/Protokoll-Umsetzung
 
 - Stufe 0: Rahmenschicht, Maskierung und Sendeplanung, auf der Hardware abgenommen.
 - Stufe 1: alle bekannten Nachrichten lesbar im Log, Identität der Brücke im Netz, Antworten auf Anfragen an die eigene Geräte-ID, Sensoren des eigenen Funkmoduls und manuelle Abfragen. Auf der Hardware abgenommen bis auf die Testtaste.
-- Stufe 2: Melderregister mit allen Knoten, Netzerkundung und Netzdetails als getrennte Abläufe, Speicherung in `nodes.bin`. Auf der Hardware zum Teil abgenommen.
+- Stufe 2: Melderregister mit allen Knoten, Netzerkundung und Netzdetails als getrennte Abläufe, Speicherung in `nodes.bin`, periodische Abfragen. Auf der Hardware abgenommen bis auf „Rediscover Network“.
 - Stufe 3: Melder als Geräte in Home Assistant mit Entitäten je Melder, netzweiten Entitäten, Ereignissen und YAML-Vorlage. Die Abnahme auf der Hardware läuft: Zuordnung, Sockel-Entnahme, Ereignisse und „Status aktualisieren“ arbeiten.
-- Stufe 4, Teil Netztest: Button, der alle Melder im Netz ertönen lässt (siehe [Netztest](#netztest)). Die Abnahme auf der Hardware steht aus.
-- Dazu ein Zähler der Fernanfragen, ein Watchdog für das Funkmodul (siehe [Sensoren und Status](#sensoren-und-status)) und ein Schalter, der jeden Rahmen roh mit Zeitstempel loggt (siehe [Rohrahmen](#rohrahmen)). Die Abnahme auf der Hardware steht aus.
+- Stufe 4, Teil Netztest: Button, der alle Melder im Netz ertönen lässt (siehe [Netztest](#netztest)). Auf der Hardware abgenommen: Alle Melder haben getönt.
+- Dazu ein Zähler der Fernanfragen, ein Watchdog für das Funkmodul (siehe [Sensoren und Status](#sensoren-und-status)) und ein Schalter, der jeden Rahmen roh mit Zeitstempel loggt (siehe [Rohrahmen](#rohrahmen)). Der Schalter arbeitet auf der Hardware; Zähler und Watchdog sind dort noch zu prüfen.
 
 Beim Start hält Kern 1 nur IRQ auf Low. Die Kommunikation mit dem Modul beginnt erst, wenn ESPHome hochgefahren und das WLAN verbunden ist. 5 s danach, damit sich Log-Clients verbinden können, fordert Kern 0 die Einrichtung des SPI-Slaves an und sendet den Init-Befehl `D3 19 50 00`. Ohne Quittung `46` wiederholt Kern 0 den Befehl bis zu 50-mal im Abstand von etwa 0,5 s. Nach der Quittung meldet das Modul nach etwa 3 s `D4 10` und nimmt bis dahin keine Bytes an. Kern 0 wartet auf diesen Rahmen, höchstens 10 s, und fragt danach den Status des eigenen Funkmoduls (`D1`) und die lokale SID-Map (`D3 03`) ab. Beides sind lokale Abfragen ohne Funkverkehr. Danach erkundet die Brücke alle SIDs ohne Eintrag im Register (siehe [Melderregister und Netzerkundung](#melderregister-und-netzerkundung)). Der Button `init_button` startet den Init jederzeit neu.
 
@@ -170,7 +170,7 @@ Nach jedem `D2` vergleicht die Brücke die Geräte-ID im Modul mit `device_id`. 
 
 Die Werte der RM-Sensoren kommen aus `D2`, nach dem Start, auf Knopfdruck und unaufgefordert etwa stündlich.
 
-`remote_requests` zählt alle Funkbefehle der Brücke an das Netz: Init, Remote-Status, ID-Information, `C7`, `72`, `C5` und den Netztest, gleich ob von Hand, aus der Erkundung oder periodisch. Jede davon weckt Funkmodule im Netz und kostet dort Batterie. Antworten der Brücke auf Anfragen anderer Knoten zählen nicht mit. Der Sensor beginnt nach jedem Neustart bei 0; als `total_increasing` rechnet Home Assistant die Summe über Neustarts hinweg weiter.
+`remote_requests` zählt alle Funkbefehle der Brücke an das Netz: Init, Remote-Status, ID-Information, `C7`, `72`, `C5` und den Netztest, gleich ob von Hand, aus der Erkundung oder periodisch. Jede davon weckt Funkmodule im Netz und kostet dort Batterie. Antworten der Brücke auf Anfragen anderer Knoten zählen nicht mit. Der Sensor beginnt nach jedem Neustart bei 0; als `total_increasing` rechnet Home Assistant die Summe über Neustarts hinweg weiter. In Home Assistant steht er als Zahl auf der Geräteseite der Brücke im Bereich „Diagnose“.
 
 | Status | Bedeutung |
 | --- | --- |
@@ -256,7 +256,7 @@ Verbindet sich der Log-Client erst später, `WiSafe2 Init senden` drücken. Ein 
 
 ### Melderregister und Netzerkundung
 
-Das Register führt bis zu 50 Knoten mit SID, Geräte-ID, Modell und Klasse, dazu im RAM Erreichbarkeit, RM-Batterie und RSSI aus `D4 06`, Melder-Batterie, Fehlerflags, Fehlerdetails, Fehlerereignisse, letzten Test, Alarm und Stummschaltung. Gehörte Nachrichten (`70`, `71`, `50`, `51`, `61`, `D2`, `D4 01`, `D4 03`, `D4 04`, `D4 09` und die Kopien von `C4`, `73`, `C6`, `C8`) aktualisieren es sofort. Anfragen anderer Knoten, etwa vom W2-MM-Dienstgerät, legen keinen Eintrag an. Dasselbe gilt für Nachrichten mit der Gateway-ID `030201` von einer SID ohne Eintrag, etwa den Test des W2-MM an SID 15; im Log und in `last_event` erscheinen sie mit `(Gateway)`. Ein Eintrag, den eine ältere Firmware so angelegt hat, bleibt bis „Rediscover Network“ bestehen. Er zählt weder als Knoten im Netz noch als nicht zugeordneter Melder.
+Das Register führt bis zu 50 Knoten mit SID, Geräte-ID, Modell und Klasse, dazu im RAM Erreichbarkeit, RM-Batterie und RSSI aus `D4 06`, Melder-Batterie, Fehlerflags, Fehlerdetails, Fehlerereignisse, letzten Test, Alarm und Stummschaltung. Gehörte Nachrichten (`70`, `71`, `50`, `51`, `61`, `D2`, `D4 01`, `D4 03`, `D4 04`, `D4 09` und die Kopien von `C4`, `73`, `C6`, `C8`) aktualisieren es sofort. Anfragen anderer Knoten, etwa vom W2-MM-Dienstgerät, legen keinen Eintrag an. Dasselbe gilt für Nachrichten mit der Gateway-ID `030201` von einer SID ohne Eintrag, etwa die Testanforderung des W2-MM an SID 15; im Log erscheinen sie mit `(Gateway)`. Ein Eintrag, den eine ältere Firmware so angelegt hat, bleibt bis „Rediscover Network“ bestehen. Er zählt weder als Knoten im Netz noch als nicht zugeordneter Melder.
 
 Abgefragt wird in zwei getrennten Abläufen. Beide beginnen mit `D3 03` und fragen die SIDs nacheinander ab:
 
@@ -347,6 +347,8 @@ Ohne weitere Angabe entstehen alle Entitäten. Jede lässt sich mit `false` abw�
 
 Werte, die noch nicht gemeldet wurden, bleiben unbekannt. Abfragen setzen den Alarm nie zurück.
 
+Der Testbefehl `>T` des W2-MM-Dienstgeräts kommt bei der Brücke als `70` mit der Gateway-ID `030201` an. Die Brücke führt ihn als `Testanforderung des W2-MM: SID 15` im Log und in `last_event` und löst dafür kein Ereignis `test` aus, weder je Melder noch netzweit. Automationen für Meldertests bleiben damit ruhig.
+
 Netzweite Einträge, alle optional:
 
 | Eintrag | Art | Inhalt |
@@ -405,7 +407,7 @@ Auf Knopfdruck sendet die Brücke `70 dev FF 01 model` mit ihrer eigenen Identit
 - Nach einem quittierten Test ist der Button 60 s gesperrt. Ohne Quittung gilt der Test als nicht ausgelöst, ein neuer Druck ist sofort möglich.
 - Jede Auslösung steht im Log. Nach der Quittung meldet `network_event` den Typ `netztest`, und `last_event` zeigt `Netztest: von der Brücke ausgelöst, alle Melder ertönen`. Abgewiesene und gescheiterte Versuche stehen mit Grund in `last_reply`.
 
-Einen Test für einen einzelnen Melder bietet die Brücke noch nicht. Dafür fehlt der Befehl an das Funkmodul, der einen Test an eine SID richtet. Das Service-Gerät W2-MM kann das mit `>T sid`; sobald ein Mitschnitt den zugehörigen Funkrahmen zeigt, folgt der Einzeltest. Die Diagnose `C1` lässt bisher nur den Hitzemelder WHT-630 piepen.
+Einen Test für einen einzelnen Melder bietet die Brücke noch nicht. Das Service-Gerät W2-MM kann das mit `>T sid`, im eigenen Netz an einem ST-630-DE bestätigt. Im Funk erscheint dabei ein `70` mit der Geräte-ID des Dongles; an welche SID es geht, legt der Befehl an das Funkmodul fest, und dieser Befehl ist noch unbekannt. Ein Mitschnitt der SPI-Leitung im Dongle würde ihn zeigen, danach folgt der Einzeltest. Die Diagnose `C1` lässt bisher nur den Hitzemelder WHT-630 piepen.
 
 ## Log
 
