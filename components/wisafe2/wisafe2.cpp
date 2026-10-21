@@ -521,6 +521,15 @@ void WiSafe2Component::report_event_(const RadioMessage &msg) {
   if (type == nullptr) {
     return;
   }
+  if (is_test_request(msg)) {
+    char text[64];
+    describe_event(msg, nullptr, text, sizeof(text));
+    ESP_LOGI(TAG, "%s", text);
+    if (this->last_event_sensor_ != nullptr) {
+      this->last_event_sensor_->publish_state(text);
+    }
+    return;
+  }
   if (this->assign_needed_) {
     this->assign_detectors_();
   }

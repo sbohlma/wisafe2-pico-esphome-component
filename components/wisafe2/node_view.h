@@ -41,6 +41,8 @@ bool epoch_valid(int64_t epoch);
 
 // Ereignistyp für die Event-Entität je Melder, nullptr für Nachrichten ohne Ereignis.
 const char *event_type(RadioType type);
+// 70 mit der Gateway-ID: der Testbefehl >T des W2-MM (P21), kein Meldertest. Er löst kein Ereignis aus.
+bool is_test_request(const RadioMessage &msg);
 // Eine Zeile für „letztes Ereignis“, etwa "Alarm: SID 4 (Flur), Rauch". name darf nullptr sein.
 void describe_event(const RadioMessage &msg, const char *name, char *out, size_t out_len);
 

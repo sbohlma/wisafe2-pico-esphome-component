@@ -156,8 +156,18 @@ const char *event_type(RadioType type) {
   }
 }
 
+bool is_test_request(const RadioMessage &msg) {
+  return msg.type == RadioType::Test && msg.has_device && is_gateway_id(msg.device_id);
+}
+
 void describe_event(const RadioMessage &msg, const char *name, char *out, size_t out_len) {
   start(out, out_len);
+  if (is_test_request(msg)) {
+    char text[48];
+    std::snprintf(text, sizeof(text), "Testanforderung des W2-MM: SID %u", msg.sid);
+    append(out, out_len, text);
+    return;
+  }
   const char *what = nullptr;
   switch (msg.type) {
     case RadioType::Alarm:
