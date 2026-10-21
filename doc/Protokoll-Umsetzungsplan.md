@@ -696,7 +696,7 @@ Beobachtung vom 13.10.2026, vermutet.
 Beobachtung vom 13.10.2026, einmal im Log, Deutung vermutet.
 
 - Um 08:35:12,757 kam `70 01 02 03 81 01 00 00 0F 02`: Test bestanden, Gerät `01 02 03` (Gateway-ID), Klasse `81` (Rauch), Modell `00 00`, SID 15, Folge 2.
-- SID 15 stand weder in der lokalen SID-Map dieses Laufs noch in `D4 10`. Nach P8 gehört SID 15 zum W2-MM-Service-Dongle. Vermutet: Das W2-MM meldet mit `70` einen eigenen Test oder einen Test, den es im Netz anstoßt, und trägt dabei die Gateway-ID, wie Gateway-RMs beim Einlernen (`D4 09 00 01 02 03`).
+- SID 15 stand weder in der lokalen SID-Map dieses Laufs noch in `D4 10`. Nach P8 gehört SID 15 zum W2-MM-Service-Dongle. Vermutet: Das W2-MM meldet mit `70` einen eigenen Test oder einen Test, den es im Netz anstößt, und trägt dabei die Gateway-ID, wie Gateway-RMs beim Einlernen (`D4 09 00 01 02 03`).
 - Modell 0 passt zu keinem Melder der Modelltabelle. Die Folgenummer 2 ist sehr klein, vermutlich kurz nach dem Einschalten des Dongles.
 - Die Brücke legte dafür einen Registerplatz „Gateway, außerhalb der SID-Map“ an und speicherte ihn in `nodes.bin`. Seit der Änderung nach der ersten Prüfung von Stufe 3 legen Nachrichten mit der Gateway-ID für SIDs ohne Platz keinen Eintrag mehr an. Ereignis und „letztes Ereignis“ kommen weiterhin, mit `(Gateway)` statt eines Meldernamens.
 - Offen: Was löste die Nachricht aus? Gegenprobe: am W2-MM gezielt einen Test starten und das Log mitschneiden.
