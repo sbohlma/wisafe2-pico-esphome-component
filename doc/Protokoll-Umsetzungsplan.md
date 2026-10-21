@@ -1,6 +1,6 @@
 # Umsetzungsplan: W2-Modulprotokoll auf der Pico-2-W-Brücke
 
-Stand: 18.10.2026, Entscheidungen E1–E12 getroffen, E3 und E7 überarbeitet, Stufe 0 umgesetzt und auf der Hardware abgenommen, Init-Sequenz korrigiert (Abschnitt 9), Stufe 1 bis auf die Testtaste abgenommen, Stufe 2 umgesetzt, nach der ersten Hardware-Prüfung überarbeitet (Zeitlimit, Erkundung und Netzdetails getrennt) und nach der zweiten nachgeschärft (Zeitlimit 240 s, Abfragen je Modell und Erreichbarkeit), Stufe 3 umgesetzt und in der Abnahme (zwei Hardware-Prüfungen ausgewertet), vollständige Runde „Netzdetails“ abgenommen, Netztest aus Stufe 4 umgesetzt, Zähler für Fernanfragen (R1), Watchdog für das Funkmodul (R8) und Schalter für Rohrahmen umgesetzt. Grundlage ist [PROTOCOL_ANALYSIS_W2_MODULE.md](https://github.com/sbohlma/FireAngel/blob/main/wisafe-mm/docs/PROTOCOL_ANALYSIS_W2_MODULE.md) (im Folgenden „Protokollanalyse“) mit den dort genannten Quellen, vor allem NikNakks [fireangel-pro-connected-esphome](https://github.com/NikNakk/fireangel-pro-connected-esphome), Tho85s [ws2mqtt](https://github.com/Tho85/ws2mqtt) und [wisafe-mm](https://github.com/sbohlma/FireAngel/tree/main/wisafe-mm).
+Stand: 21.10.2026, Entscheidungen E1–E12 getroffen, E3 und E7 überarbeitet, Stufe 0 umgesetzt und auf der Hardware abgenommen, Init-Sequenz korrigiert (Abschnitt 9), Stufe 1 bis auf die Testtaste abgenommen, Stufe 2 umgesetzt, nach der ersten Hardware-Prüfung überarbeitet (Zeitlimit, Erkundung und Netzdetails getrennt) und nach der zweiten nachgeschärft (Zeitlimit 240 s, Abfragen je Modell und Erreichbarkeit), Stufe 3 umgesetzt und in der Abnahme (zwei Hardware-Prüfungen ausgewertet), vollständige Runde „Netzdetails“ abgenommen, Netztest aus Stufe 4 umgesetzt, Zähler für Fernanfragen (R1), Watchdog für das Funkmodul (R8) und Schalter für Rohrahmen umgesetzt, periodische Abfragen auf der Hardware abgenommen. Grundlage ist [PROTOCOL_ANALYSIS_W2_MODULE.md](https://github.com/sbohlma/FireAngel/blob/main/wisafe-mm/docs/PROTOCOL_ANALYSIS_W2_MODULE.md) (im Folgenden „Protokollanalyse“) mit den dort genannten Quellen, vor allem NikNakks [fireangel-pro-connected-esphome](https://github.com/NikNakk/fireangel-pro-connected-esphome), Tho85s [ws2mqtt](https://github.com/Tho85/ws2mqtt) und [wisafe-mm](https://github.com/sbohlma/FireAngel/tree/main/wisafe-mm).
 
 Ziel: Alle Melder im Netz erscheinen in ESPHome und Home Assistant mit Zustand, Fehlern, Batterie und Ereignissen. Diagnose und Netztest stehen als Funktionen bereit.
 
@@ -126,7 +126,7 @@ Abnahme (Stand 12.10.2026, Logs 02:48–03:02 und 03:39–04:30):
 
 ### Stufe 2: Melderregister und Netzerkundung
 
-Stand: im Code umgesetzt (`registry`, `discovery`, `node_store`, Buttons in `buttons.h`, Host-Tests `test_registry.cpp` und `test_discovery.cpp`). Nach der ersten Prüfung auf der Hardware am 12.10.2026 überarbeitet: Zeitlimit für Fernantworten per YAML einstellbar, Erkundung und Netzdetails als getrennte Abläufe (siehe „Überarbeitung nach der ersten Hardware-Prüfung“). Nach der zweiten Prüfung am 13.10.2026 nachgeschärft: Zeitlimit 240 s, kein `C7` an den WHT-630, unerreichbare SIDs nur in der Erkundung, `C5` nur bei gemeldeten Fehlern (siehe „Überarbeitung nach der zweiten Hardware-Prüfung“). Am 13.10.2026 lief eine vollständige Runde „Netzdetails“ ohne Zeitüberschreitung (siehe „Dritte Prüfung auf der Hardware“). Offen sind noch „Rediscover Network“ in einem Lauf und die periodischen Abfragen mit `auto_discovery: true` (E5): `D3 06` je SID alle 19 h, `C7` je Melder alle 24 h, gleichmäßig verteilt ab 15 min nach dem Start. Sie sind im Code umgesetzt und laufen bisher nur auf dem PC in den Host-Tests.
+Stand: im Code umgesetzt (`registry`, `discovery`, `node_store`, Buttons in `buttons.h`, Host-Tests `test_registry.cpp` und `test_discovery.cpp`). Nach der ersten Prüfung auf der Hardware am 12.10.2026 überarbeitet: Zeitlimit für Fernantworten per YAML einstellbar, Erkundung und Netzdetails als getrennte Abläufe (siehe „Überarbeitung nach der ersten Hardware-Prüfung“). Nach der zweiten Prüfung am 13.10.2026 nachgeschärft: Zeitlimit 240 s, kein `C7` an den WHT-630, unerreichbare SIDs nur in der Erkundung, `C5` nur bei gemeldeten Fehlern (siehe „Überarbeitung nach der zweiten Hardware-Prüfung“). Am 13.10.2026 lief eine vollständige Runde „Netzdetails“ ohne Zeitüberschreitung (siehe „Dritte Prüfung auf der Hardware“). Die periodischen Abfragen mit `auto_discovery: true` (E5) sind am 21.10.2026 abgenommen (siehe „Vierte Prüfung auf der Hardware“). Offen ist noch „Rediscover Network“ in einem Lauf.
 
 Ziel: Die Brücke kennt alle Knoten des Netzes und hält deren Zustand aktuell.
 
@@ -262,6 +262,14 @@ Dritte Prüfung auf der Hardware (Log vom 13.10.2026, 10:55–12:59, Firmware vo
 - Register danach: 22 Knoten, 21 vollständig. Die 19 Melder stimmen in Geräte-ID und Modell mit der Knotenliste von wisafe-mm überein, auch SID 1 als ST-630-DE (P15).
 - „Netzdetails“ per Button um 11:11: 20 SIDs in 3166 s (53 min). Alle 57 Antworten kamen innerhalb des Zeitlimits, die längste nach 199,9 s (`73` von SID 19, P19). Kein `C7` an den WHT-630, kein `C5`, weil alle Melder FS 0000 meldeten, an SID 24 nur der Remote-Status, SID 16 übersprungen.
 - Keine Sperrphase „Modul taktet nicht“, keine Rahmenfehler, keine `Roh:`-Zeilen. `nodes.bin`: neun Schreibvorgänge mit 47–133 ms.
+
+Vierte Prüfung auf der Hardware (Mitschnitt des W2-MM mit wisafe-mm vom 19.10.2026, 00:41, bis 21.10.2026, 10:30, Firmware vom 19.10.2026 mit `auto_discovery: true`; die Brücke lief laut Systemtimer ab 19.10.2026, 01:24:45, ohne Neustart):
+
+- Start: 67 s nach dem Einschalten erkundete die Brücke SID 16, die einzige SID ohne vollständigen Eintrag (`D3 06 10 00` um 01:25:52).
+- Remote-Status: Die Periodik begann 15 min nach dem Start, danach folgte je ein `D3 06` im Abstand von 54,0 bis 54,6 min (Soll 19 h / 21 = 54,3 min). Die Reihenfolge lief über SID 0 bis 14, 16 bis 19, 24 und 26, also über alle Netzmitglieder außer dem eigenen RM, mit der unerreichbaren SID 16 und dem RM ohne Melder an SID 24. SID 15 (W2-MM) gehört nicht zur Karte und blieb außen vor. Die nächste Runde begann nach 19 h: `D3 06 03 00` am 20.10. um 18:23:37 liegt genau 45 Schritte nach dem ersten.
+- Batterie: Der erste `C7` ging um 01:40:48 an SID 0, danach je einer im Abstand von genau 80,00 min (24 h / 18) an die 18 Melder außer dem WHT-630 an SID 3. Nach 24 h folgte dieselbe Reihe zur selben Minute, etwa SID 0 um 01:40:44 und SID 1 um 03:00:44 am 21.10. wie am 19.10.
+- Handabfragen kamen dazwischen durch: „Status aktualisieren“ an SID 26 um 01:46 mit `D3 06`, `C7` und `72`, danach die Sockel-Entnahme an SID 26 (`71` abgenommen um 01:48:17, zurück auf dem Sockel um 01:49:49).
+- In 57 h liefen damit rund 63 Remote-Status und 43 Batterieabfragen, im Mittel knapp zwei Fernanfragen je Stunde. Jede davon leiten fast alle RMs im Netz weiter (P22).
 
 ### Stufe 3: Melder als Geräte in Home Assistant
 
@@ -439,14 +447,16 @@ Getroffen am 11.10.2026.
 
 Hardware-Abnahme mit der Firmware von Stufe 3 (Abschnitt 3) fortsetzen. Geprüft sind Zuordnung, „Status aktualisieren“, Sockel-Entnahme, Ereignisse, die übernommene YAML-Vorlage mit 19 Meldern und eine vollständige Runde „Netzdetails“ mit 240 s. Offen: aus Stufe 2 „Rediscover Network“ in einem Lauf; für Stufe 3 „nicht zugeordnete Melder“ leer mit der neuen Firmware, Melder als Geräte in Home Assistant prüfen und die Testtaste an einem Melder. Die Testtaste schließt zugleich die Abnahme von Stufe 1 ab.
 
-Stufe 4: Netztest auf der Hardware abnehmen. Erwartet im Log: `Sende 70 A5 B8 14 FF 01 11 03 7E`, `46`, `41`, `91`, danach ertönen alle Melder. Zu beobachten: ob die Melder mit eigenen `70` antworten und ob die Brücke Kopien ihres eigenen `70` erhält. Für den Test je Melder den Mitschnitt aus P21 machen.
+Stufe 4: Netztest auf der Hardware abnehmen. Erwartet im Log: `Sende 70 A5 B8 14 FF 01 11 03 7E`, `46`, `41`, `91`, danach ertönen alle Melder. Zu beobachten: ob die Melder mit eigenen `70` antworten und ob die Brücke Kopien ihres eigenen `70` erhält. Für den Test je Melder den Mitschnitt aus P21 machen. Am 21.10.2026 um 10:07:19 und 10:08:19 hörte das W2-MM den Netztest der Brücke (`70` von SID 20, Klasse `FF`), weitergeleitet von 20 RMs (P22). Offen: Haben alle Melder getönt? Das Log der Brücke beginnt erst um 10:13.
 
-Neu umgesetzt am 18.10.2026, auf der Hardware abzunehmen:
+Umgesetzt am 18.10.2026, Stand der Abnahme:
 
-- Periodische Abfragen (E5) mit `auto_discovery: true`: 15 min nach dem Start beginnt die Planung. Die Abfragen verteilen sich gleichmäßig über das Intervall, je Zeitpunkt eine: bei 21 SIDs etwa alle 54 min ein `D3 06`, bei 19 Meldern etwa alle 76 min ein `C7`. Zu prüfen: Werte in Home Assistant aktualisieren sich, die Warteschlange bleibt frei für Handabfragen, nach 19 h bzw. 24 h folgt die nächste Runde. `72` folgt ereignisgesteuert nach einem `71` mit Flag 0x02.
-- Zähler `remote_requests`: steigt je quittierter Fernanfrage um 1. Eine Runde „Netzdetails“ erhöht ihn um die Zahl der gesendeten Abfragen.
+- Periodische Abfragen (E5) mit `auto_discovery: true`: abgenommen am 21.10.2026 (Abschnitt 3, Stufe 2, vierte Prüfung). Ein `D3 06` alle 54,3 min reihum über 21 SIDs, ein `C7` alle 80 min reihum über 18 Melder (ohne WHT-630), nächste Runde nach 19 h bzw. 24 h. `72` nach einem `71` mit Flag 0x02 kam im Mitschnitt nicht vor.
+- Zähler `remote_requests`: steigt je quittierter Fernanfrage um 1. Erwartet am 21.10.2026 um 10:13 nach 57 h Laufzeit: etwa 113 (Init, Erkundung von SID 16, rund 63 Remote-Status, 43 Batterieabfragen, „Status aktualisieren“ an SID 26 mit drei Abfragen, zwei Netztests). Das Log zeigt den Wert nicht, weil der Log-Client den ersten Zustand übergeht; den Wert in Home Assistant ablesen.
 - Watchdog: Im Normalbetrieb bleibt der Modulstatus „bereit“. Ein hängendes Modul (etwa nach dem Einlernen eines anderen Knotens) zeigt nach drei Befehlen ohne Quittung „keine Antwort“ und die Warnung im Log; nach dem Trennen der Versorgung meldet das Log „Modul reagiert wieder“.
-- Schalter `raw_log_switch`: eingeschaltet erscheint je Rahmen eine Zeile `RX` oder `TX` unter `wisafe2.raw` mit Zeitstempel der Brücke, ausgeschaltet keine. Mit diesen Zeitstempeln die Gegenprobe zu P17 wiederholen.
+- Schalter `raw_log_switch`: arbeitet laut Log vom 21.10.2026. Jede Rohzeile trägt die Zeit von Kern 1; die Brücke sendete `C2` 5,95 ms nach dem Empfang von `C1`, die Quittung `46` folgte 0,87 ms danach. Erste Stichprobe zum Zeitraster in P17; für eine belastbare Gegenprobe den Schalter während einer Runde „Netzdetails“ einschalten.
+
+Zu entscheiden: Der Testbefehl `>T` des W2-MM an die Brücke kommt als `70` mit der Gateway-ID an (P21). Die Brücke meldet ihn bisher als Ereignis `test` mit „Test bestanden: SID 15 (Gateway)“. Vorschlag: als „Testanforderung des W2-MM“ loggen und ohne Ereignis `test` behandeln, damit Automationen für Meldertests nicht auslösen. Eine Antwort sendet die Brücke weiterhin nicht.
 
 ## 9. Neue Erkenntnisse zum Protokoll
 
@@ -568,6 +578,7 @@ Beobachtung vom 12.10.2026, Log über die native API (Zeitstempel ohne Bündelun
 - Folgenummern von SID 14: `C4` 5, `C8` 8, `73` 9, `71` 10 und 11. Zwischen `C4` und `C8` fehlen 6 und 7, dazwischen lag nur der Remote-Status. Vermutet: Das Ziel-RM verbraucht für den Remote-Status Folgenummern, obwohl `D4 06` selbst keine trägt. Das passt zur Lücke bei Folge 12 in P7. Gegenprobe: zwei Remote-Status-Abfragen hintereinander und danach `C7` an dasselbe Ziel.
 - Sockel-Zeiten: `71 … 01` kam einmal mit einer Kopie in derselben Millisekunde (gleiche SID, gleicher Typ, gleiche Folge). `71 … 05` folgte 53 s später. Die Abstände zum Handgriff hat der Nutzer nicht gemessen.
 - Nachtrag vom 13.10.2026, Netzdetails aller Melder: Die 18 ST-630-DE melden in `C8` Werte von 2928 bis 3039 mV, und zwar 2928, 2937, 2945, 2954, 2962, 2971, 2988, 2996, 3005, 3013, 3022 und 3039 mV. Die Werte liegen auf einem Raster von etwa 8,5 mV, vermutlich der Auflösung der Messung im Melder. SID 11 und SID 14 melden beide 2954 mV, SID 14 und SID 26 dieselben Werte wie am Vortag. Die Vermutung eines festen Werts ist damit widerlegt: Jeder Melder meldet seine eigene Spannung, bei SID 14 und SID 26 über einen Tag unverändert.
+- Nachtrag vom 21.10.2026, periodische Batterieabfragen vom 19. bis 21.10.2026 (Mitschnitt des W2-MM): SID 0 2996 mV am 19.10. und 2988 mV am 21.10., eine Rasterstufe tiefer; SID 1 2954, SID 2 2996, SID 4 3039, SID 5 2971, SID 6 2996, SID 7 2945, SID 14 2954, SID 18 3013, SID 19 2988, SID 26 3022 mV. SID 17 meldet 2920 mV und liegt damit unter dem bisherigen Bereich.
 
 ### P10: Laufzeiten der Fernantworten und Stau bei überlappenden Anfragen
 
@@ -629,6 +640,7 @@ Beobachtung vom 12.10.2026.
 - `D4 06` d8–d10 ist die vom Host gelernte Geräte-ID (wie `D2` d6–d8). Vermutet: Das RM an SID 24 steckte früher am Melder 2FE43D, behielt die gelernte ID und trägt heute keinen Melder. Das kritische Bit passt zur schwachen RM-Batterie.
 - Antworten des Melders (`C8`, `73`, `C6`) tragen am Ende die SID des sendenden RM und lassen sich damit eindeutig SID 14 zuordnen.
 - Gegenprobe: SID 24 im Haus suchen, etwa über die Diagnose im W2-MM.
+- Nachtrag vom 21.10.2026: Das W2-MM hörte am 21.10. um 08:52:15 das `D4 06` von SID 24 mit RM-Batterie 2,50 V, Flag „RM battery LOW“, RSSI 46 und weiterhin der Geräte-ID 2FE43D. Das kritische Bit ist damit als schwache RM-Batterie bestätigt.
 
 ### P15: RMs mit Firmware `DF`
 
@@ -671,6 +683,7 @@ Beobachtung vom 13.10.2026, vermutet.
 - Gegenprobe vom 13.10.2026, Log 08:10–08:35 über die native API: Die sieben Funkrahmen (`D4 10`, `D4 06`, `C8`, `73`, zweimal `71`, `70`) liegen modulo 0,5 s bei 0,013, 0,205, 0,304, 0,096, 0,058, 0,147 und 0,257 s. Zwischen `C8` und `73` von SID 26 liegen nur 21 s, die Phase springt dabei von 0,304 auf 0,096. Ein gemeinsames Raster zeigt dieses Log nicht. Die Vermutung bleibt offen; die Stichprobe ist klein, und die Zeitstempel vergibt der Log-Client beim Empfang über WLAN.
 - Nachtrag vom 13.10.2026, Log 10:55–12:59: Die Zeitstempel des Log-Clients streuen um bis zu 0,5 s. Die Quittung `46` steht meist in derselben Millisekunde wie die Zeile `Sende`, einmal aber 499 ms später (11:11:31,152 → 11:11:31,651). Einmal steht `Sende` nur 67 ms nach dem vorigen Rahmen, obwohl die Sendeplanung 500 ms Ruhe hält. Eine Auswertung auf ein Raster von 0,5 s ist mit diesen Zeitstempeln nicht möglich; dafür braucht es Zeitstempel der Brücke selbst.
 - Nachtrag vom 18.10.2026: Zeitstempel der Brücke liefert jetzt der Schalter `raw_log_switch`. Kern 1 stempelt jedes empfangene Byte mit dem µs-Zähler des Pico, die Rohzeile `RX` trägt die Zeit des letzten Bytes (`7E`). Die Gegenprobe folgt mit einem Log, in dem der Schalter eingeschaltet ist.
+- Erste Stichprobe vom 21.10.2026, Rohzeilen der Brücke: Vier Funkrahmen vom W2-MM (`70` dreimal, `C1` einmal) liegen modulo 0,5 s bei 0,127, 0,116, 0,266 und 0,211 s. Die ersten beiden liegen 87,5 s auseinander und weichen um 11 ms voneinander ab, die übrigen passen nicht dazu. Ein gemeinsames Raster zeigt diese Stichprobe nicht; sie ist klein und stammt von nur einem Absender. Für die Gegenprobe den Schalter während einer Runde „Netzdetails“ einschalten.
 
 ### P18: Das W2-MM sendet `70` mit der Gateway-ID
 
@@ -681,6 +694,7 @@ Beobachtung vom 13.10.2026, einmal im Log, Deutung vermutet.
 - Modell 0 passt zu keinem Melder der Modelltabelle. Die Folgenummer 2 ist sehr klein, vermutlich kurz nach dem Einschalten des Dongles.
 - Die Brücke legte dafür einen Registerplatz „Gateway, außerhalb der SID-Map“ an und speicherte ihn in `nodes.bin`. Seit der Änderung nach der ersten Prüfung von Stufe 3 legen Nachrichten mit der Gateway-ID für SIDs ohne Platz keinen Eintrag mehr an. Ereignis und „letztes Ereignis“ kommen weiterhin, mit `(Gateway)` statt eines Meldernamens.
 - Offen: Was löste die Nachricht aus? Gegenprobe: am W2-MM gezielt einen Test starten und das Log mitschneiden.
+- Geklärt am 21.10.2026: Das `70` mit der Gateway-ID ist der Testbefehl `>T sid` des W2-MM (P21). Der Dongle meldet in seinem eigenen `D2` die Geräte-ID `01 02 03` (wisafe-mm: „ID field 030201“, FW `02`, RM-Batterie 3,24 V). Die Gateway-ID ist also die gelernte ID des RM im Dongle.
 
 ### P19: Laufzeiten einer vollständigen Runde, `73` braucht am längsten
 
@@ -715,3 +729,31 @@ Zusammenstellung vom 13.10.2026 aus den Quellen, im eigenen Netz noch ungeprüft
 - Diagnose: `C1` erreicht das Ziel als `C1 00 00 00 00 00 00 01 sid seq`, ohne Geräte-ID. Nur der WHT-630 piept und meldet `C2`; die ST-630-DE ignorieren `C1` (Protokollanalyse, Test mit dem Dongle). Den Befehl an das RM, mit dem ein Host `C1` an eine SID richtet, nennt keine Quelle; der Dongle erzeugt `C1` aus `>D sid`.
 - W2-MM: `>T sid[, n]` heißt „Test – Melder ertönt“, in wisafe-mm `Cmd.test_node`. Der Funkrahmen dazu ist noch nie mitgeschnitten worden. Das `70` mit Gateway-ID von SID 15 aus P18 könnte dazugehören.
 - Gegenprobe: Die Brücke lauscht, am W2-MM geht `>T sid` an einen ST-630-DE, einmal mit dem Melder auf dem Sockel und einmal abgenommen, damit der Rahmen geflutet wird wie `C1` in der Protokollanalyse. Zu notieren: welcher Melder ertönt und jede Zeile `Roh:` oder `70` der Brücke in dieser Zeit. Trägt der Rahmen eine Geräte-ID wie `72`, `C5` und `C7`, kann die Brücke ihn selbst senden, und ein Test je Melder wird möglich.
+- Nachtrag vom 21.10.2026, Mitschnitt mit wisafe-mm und Rohzeilen der Brücke (10:07–10:32):
+  - `>T 14` (Test an SID 20, die Brücke), viermal: Die Brücke empfing jedes Mal binnen 6 s `70 01 02 03 81 01 00 00 0F seq`, im Log mit den Folgen `0B`, `0C` und `0E`; das erste kam vor Beginn des Logs, sichtbar am Abstand der ersten Rohzeile (etwa 10:13:51 → 10:13:54,988 und 10:25:03 → 10:25:04,069). Der Testbefehl ist also ein `70` mit der Geräte-ID des Dongles (P18), Klasse `81`, Ergebnis `01` und Modell 0. Ziel-SID und Ziel-Geräte-ID stehen nicht im Inhalt; das RM stellt den Rahmen wie `C1` dem Host des Ziels zu. Das W2-MM hörte dazu nur drei Weiterleitungen (SID 26, 0, 10), beim Netztest der Brücke 20.
+  - Nach `>T` wartet das W2-MM etwa 90 s und meldet dann „Test Node: response timed out“. Die Brücke antwortet nicht. Vermutet: Ein Melder ertönt und meldet seinen Test mit einem eigenen `70`.
+  - `>T 1A` an SID 26 (ST-630-DE), dreimal: Es wurde weder ein `70` noch eine Antwort gehört; die ersten beiden endeten mit „response timed out“, beim dritten endet das Log. Offen: Hat SID 26 getönt?
+  - `>D 14`, zweimal mit Antwort: Beim zweiten empfing die Brücke `C1 00 00 00 00 00 00 01 0F 0D` 4 s nach dem Befehl und antwortete nach 5,95 ms mit `C2 A5 B8 14 FF 11 03 01`. Das W2-MM zeigte „Diagnostics result … result 0x01“, weitergeleitet von 16 bis 17 RMs.
+  - `>D 1A` an SID 26, zweimal: keine Antwort, wie für die ST-630-DE erwartet.
+  - Um 10:29 sandte das W2-MM von Hand `3E 79 14 40` und danach `70 A5 B8 14 FF 01 11 03`, den Netztest-Rahmen mit der Identität der Brücke. Er erschien im Netz mit SID 20 als Absender und sechs Weiterleitungen. Die Brücke meldete in dieser Zeit kein `70`. Die Bedeutung von `3E 79 14 40` ist offen.
+  - Folgerung: Den Test je Melder kann die Brücke senden, sobald der Befehl an das RM bekannt ist, der ein `70` an eine einzelne SID richtet. Das RM im Dongle kennt ihn; ein Mitschnitt der SPI-Leitung zwischen Dongle-Host und Dongle-RM würde ihn zeigen.
+
+### P22: Funknachrichten werden von fast allen RMs weitergeleitet
+
+Bestätigt am 21.10.2026, Mitschnitt des W2-MM vom 19. bis 21.10.2026, für `C7`, `72`, `C8`, `73`, `71`, `70` und `C2`.
+
+- wisafe-mm zeigt jede Funknachricht mehrfach, jeweils mit dem weiterleitenden RM („via“). Eine Batterieantwort `C8` kam über 12 bis 19 verschiedene RMs, der Netztest der Brücke über 20, die Diagnoseantwort `C2` der Brücke über 16 bis 17, ein Fehlerbericht `71` über 15 bis 17. Auch das RM der Brücke (SID 20) und die RMs an SID 24 und 26 leiten weiter.
+- Die Anfragen der Brücke erscheinen ebenso, etwa `C7 85 D8 33 7C 04 06 14 xx`: `14` ist SID 20 der Brücke, `xx` wechselt innerhalb einer Anfrage über 17 bis 20 Werte. An dieser Stelle steht beim Host die Folgenummer; im Mitschnitt ist es nach der Deutung von wisafe-mm die SID des weiterleitenden RM (vermutet).
+- Zeitlicher Ablauf: Die erste Welle dauert 3 bis 5 s, einzelne Wiederholungen folgen bis etwa 60 s später, vereinzelt bis 90 s.
+- Beim Host kommt jede Nachricht trotzdem einmal an: Die Brücke empfing jedes `70` und `C1` des W2-MM genau einmal (Rohzeilen vom 21.10.2026). Das RM filtert die Kopien selbst; die seltenen Kopien in derselben Millisekunde (P19) sind Ausnahmen.
+- Vermutet: Das Netz flutet jede Nachricht, jedes RM sendet sie einmal weiter. Die späten Wiederholungen passen zu RMs, die erst später aufwachen (P16).
+- Folgerung für R1: Jede Fernanfrage kostet in fast jedem RM des Netzes Sendezeit, für die Anfrage und für die Antwort. `remote_requests` zählt die eigenen Anfragen; die Funklast im Netz ist ein Vielfaches davon.
+
+### P23: Der Remote-Status geht als `D3 06` über Funk
+
+Beobachtung vom 19. bis 21.10.2026, Mitschnitt des W2-MM.
+
+- Das W2-MM hört `D3 06 sid 00` der Brücke als Funkrahmen (wisafe-mm: „Monitor command“). Bei erreichbaren Zielen erscheint er einmal. Die Antwort `D4 06` („Network report“) hörte das W2-MM in acht Fällen 3 bis 15 s danach, in sieben davon nach 3 bis 4 s.
+- An die unerreichbare SID 16 wiederholt das RM `D3 06 10 00` vier- bis fünfmal im Abstand von 3 bis 7 s (19.10. 01:25:52–01:26:06, 21.10. 05:15:04–05:15:19). Danach folgt laut P12 `D4 01`.
+- Werte aus den gehörten `D4 06`: SID 24 siehe P14, SID 17 RSSI 61, SID 19 RSSI 71, die übrigen 84 bis 132.
+- Offen: Bei der Brücke kam `D4 06` bisher nach 3 bis 176 s an (P16, P19). Über Funk lag die Antwort hier meist nach 3 bis 4 s vor. Gegenprobe: Rohzeilen der Brücke und Mitschnitt des W2-MM gleichzeitig aufzeichnen und die Zeiten für dieselbe Anfrage vergleichen.
