@@ -763,3 +763,18 @@ Beobachtung vom 19. bis 21.10.2026, Mitschnitt des W2-MM.
 - An die unerreichbare SID 16 wiederholt das RM `D3 06 10 00` vier- bis fünfmal im Abstand von 3 bis 7 s (19.10. 01:25:52–01:26:06, 21.10. 05:15:04–05:15:19). Danach folgt laut P12 `D4 01`.
 - Werte aus den gehörten `D4 06`: SID 24 siehe P14, SID 17 RSSI 61, SID 19 RSSI 71, die übrigen 84 bis 132.
 - Offen: Bei der Brücke kam `D4 06` bisher nach 3 bis 176 s an (P16, P19). Über Funk lag die Antwort hier meist nach 3 bis 4 s vor. Gegenprobe: Rohzeilen der Brücke und Mitschnitt des W2-MM gleichzeitig aufzeichnen und die Zeiten für dieselbe Anfrage vergleichen.
+
+### P24: Gezielter Test: Befund am Dongle und Versuchsplan
+
+Mitschnitt der SPI-Leitung zwischen USB-Teil und RM des W2-MM am 24.10.2026 (Logikanalysator, Auswertung in FireAngel/wisafe-mm).
+
+- Das RM des Dongles erzeugt das Textprotokoll selbst (`>RSSI`, `>Msg`, `>Conf`), der USB-Teil reicht nur durch. `>T 14` kam am RM als Text an: `3E 54 20 31 34 7D 01 7E`. Das RM trägt eine eigene Monitor-Firmware (FW `02` im `D2`).
+- Das RM des Dongles antwortete auf `>T` mit nichts: kein `46`, kein `>Conf`, keine Kopie. Die Brücke empfing 1,5 s später genau einmal `70 01 02 03 81 01 00 00 0F 0A`. Beim Test an SID 26 empfing sie nichts, SID 26 tönte.
+- Folgerung: Den gezielten Test bildet die Firmware des Dongle-RM. Einen Binärbefehl dafür, den die Brücke abschauen könnte, gibt es nicht. Ein normales RM richtet bekannt nur `D3 06 sid 00` (an das Ziel-RM, Antwort `D4 06`) und `D3 06 sid 01` (an den Host des Ziels als `C3`) an eine SID.
+
+Versuch mit `wisafe2.send_raw` (Rohrahmen loggen an, je Befehl warten, bis 60 s Ruhe ist):
+
+1. Ziel Dongle (SID 15), Mitschnitt der SPI-Leitung im Dongle läuft. Zuerst die Kontrolle `D3 06 0F 01`, dann `D3 06 0F 02` bis `D3 06 0F 07` einzeln. Zu notieren: Quittung `46`/`47` an der Brücke, was das Dongle-RM per SPI meldet, Antworten bei der Brücke.
+2. Ergibt ein Wert beim Dongle ein `70` oder ein `C1`, denselben Wert an SID 26 (ST-630-DE): `D3 06 1A xx`. Zu notieren: ob SID 26 tönt und was zurückkommt.
+
+Abbruch bei `47`, bei unerwartetem Verhalten des Dongles (etwa Verlust der Kopplung) oder wenn ein Melder ertönt, der nicht das Ziel ist.

@@ -250,6 +250,23 @@ button:
 
 Das Ergebnis steht im Log und in `last_reply`, etwa `Batterie Gerät 33F0DC, 2954 mV, SID 11, Folge 13` oder `Remote-Status SID 25: nicht erreichbar (D4 01)`.
 
+### Rohbefehle
+
+`wisafe2.send_raw` schickt dem Funkmodul einen beliebigen Befehl, als Hex ohne Rahmenende, höchstens 15 Bytes. Gedacht für Versuche mit unbekannten Befehlen. Die Brücke behandelt ihn wie eine Fernanfrage: Sie wartet auf `46` oder `47` und meldet das in `last_reply`, etwa `Rohbefehl D3 06 0F 02: quittiert (46)`. Eine Antwort erwartet sie nicht; was danach vom Modul kommt, steht im Log, vollständig mit eingeschaltetem `raw_log_switch`. Ein Rohbefehl kann Melder auslösen oder das Netz verändern; die Brücke prüft den Inhalt nicht.
+
+```yaml
+api:
+  actions:
+    - action: wisafe2_send_raw
+      variables:
+        payload: string
+      then:
+        - wisafe2.send_raw:
+            payload: !lambda "return payload;"
+```
+
+In Home Assistant dann etwa `esphome.wisafe2_pico_bridge_wisafe2_send_raw` mit `payload: "D3 06 0F 02"`.
+
 `spi_button` richtet SPI-Slave und IRQ auf Kern 1 neu ein, zum Testen, sobald kein Befehl unterwegs ist. Danach steht im Log `SPI-Slave gestartet, CS …, SCK …, MOSI …` mit den gelesenen Pegeln. Im Ruhezustand sind CS High und SCK Low.
 
 Verbindet sich der Log-Client erst später, `WiSafe2 Init senden` drücken. Ein Druck sendet den Befehl bis zu 50-mal und hört bei `46 7E` auf.
@@ -407,7 +424,7 @@ Auf Knopfdruck sendet die Brücke `70 dev FF 01 model` mit ihrer eigenen Identit
 - Nach einem quittierten Test ist der Button 60 s gesperrt. Ohne Quittung gilt der Test als nicht ausgelöst, ein neuer Druck ist sofort möglich.
 - Jede Auslösung steht im Log. Nach der Quittung meldet `network_event` den Typ `netztest`, und `last_event` zeigt `Netztest: von der Brücke ausgelöst, alle Melder ertönen`. Abgewiesene und gescheiterte Versuche stehen mit Grund in `last_reply`.
 
-Einen Test für einen einzelnen Melder bietet die Brücke noch nicht. Das Service-Gerät W2-MM kann das mit `>T sid`, im eigenen Netz an einem ST-630-DE bestätigt. Im Funk erscheint dabei ein `70` mit der Geräte-ID des Dongles; an welche SID es geht, legt der Befehl an das Funkmodul fest, und dieser Befehl ist noch unbekannt. Ein Mitschnitt der SPI-Leitung im Dongle würde ihn zeigen, danach folgt der Einzeltest. Die Diagnose `C1` lässt bisher nur den Hitzemelder WHT-630 piepen.
+Einen Test für einen einzelnen Melder bietet die Brücke noch nicht. Das Service-Gerät W2-MM kann das mit `>T sid`, im eigenen Netz an einem ST-630-DE bestätigt. Im Funk erscheint dabei ein `70` mit der Geräte-ID des Dongles. Der Mitschnitt der SPI-Leitung im Dongle (24.10.2026) zeigt: Das RM des Dongles bekommt den Text `>T 1A` und bildet den gezielten Rahmen selbst, mit einer eigenen Firmware (FW `02`). Einen Binärbefehl dafür gibt es dort nicht. Ein normales RM kennt als gezielte Anfragen bisher nur `D3 06 sid 00` und `D3 06 sid 01`; ob weitere Werte im letzten Byte einen Test oder eine Diagnose an eine SID richten, ist mit `wisafe2.send_raw` zu prüfen (Plan P24). Die Diagnose `C1` lässt bisher nur den Hitzemelder WHT-630 piepen.
 
 ## Log
 
