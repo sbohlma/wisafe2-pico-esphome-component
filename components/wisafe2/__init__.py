@@ -46,6 +46,7 @@ Detector = wisafe2_ns.class_("Detector")
 QueryRemoteStatusAction = wisafe2_ns.class_("QueryRemoteStatusAction", automation.Action)
 QueryIdentityAction = wisafe2_ns.class_("QueryIdentityAction", automation.Action)
 QueryDeviceAction = wisafe2_ns.class_("QueryDeviceAction", automation.Action)
+SendRawAction = wisafe2_ns.class_("SendRawAction", automation.Action)
 
 CONF_DEVICE_ID = "device_id"
 CONF_SID = "sid"
@@ -97,6 +98,24 @@ def device_id_value(value):
     value = cv.string_strict(value).strip().upper()
     if len(value) != 6 or any(c not in "0123456789ABCDEF" for c in value):
         raise cv.Invalid("Geräte-ID braucht 6 Hex-Ziffern, etwa 14B8A5")
+    return value
+
+
+MAX_RAW_PAYLOAD = 15
+
+
+def raw_payload_value(value):
+    """Befehl an das RM als Hex-Bytes ohne Rahmenende, etwa "D3 06 0F 02"."""
+    value = cv.string_strict(value).strip().upper()
+    digits = value.replace(" ", "")
+    if (
+        not digits
+        or len(digits) % 2
+        or len(digits) > 2 * MAX_RAW_PAYLOAD
+        or any(c not in "0123456789ABCDEF" for c in digits)
+        or any(len(part) % 2 for part in value.split())
+    ):
+        raise cv.Invalid(f"Rohbefehl braucht 1–{MAX_RAW_PAYLOAD} Hex-Bytes, etwa \"D3 06 0F 02\"")
     return value
 
 
@@ -652,3 +671,20 @@ def register_device_query(name, request_code):
 register_device_query("wisafe2.query_battery", 0xC7)
 register_device_query("wisafe2.query_fault_details", 0x72)
 register_device_query("wisafe2.query_fault_events", 0xC5)
+
+CONF_PAYLOAD = "payload"
+
+SEND_RAW_SCHEMA = cv.Schema(
+    {
+        cv.GenerateID(): cv.use_id(WiSafe2Component),
+        cv.Required(CONF_PAYLOAD): cv.templatable(raw_payload_value),
+    }
+)
+
+
+@automation.register_action("wisafe2.send_raw", SendRawAction, SEND_RAW_SCHEMA, synchronous=True)
+async def send_raw_to_code(config, action_id, template_arg, args):
+    var = cg.new_Pvariable(action_id, template_arg)
+    await cg.register_parented(var, config[CONF_ID])
+    cg.add(var.set_payload(await cg.templatable(config[CONF_PAYLOAD], args, cg.std_string)))
+    return var

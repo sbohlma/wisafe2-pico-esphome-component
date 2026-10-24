@@ -111,6 +111,20 @@ void test_device_id_text() {
   CHECK(std::strcmp(text, "2FE43D") == 0);
 }
 
+void test_hex_bytes() {
+  uint8_t bytes[4];
+  CHECK_EQ(parse_hex_bytes("D3 06 0F 02", bytes, sizeof(bytes)), 4u);
+  CHECK_EQ(bytes[0], 0xD3);
+  CHECK_EQ(bytes[3], 0x02);
+  CHECK_EQ(parse_hex_bytes(" d3060f ", bytes, sizeof(bytes)), 3u);
+  CHECK_EQ(bytes[2], 0x0F);
+  CHECK_EQ(parse_hex_bytes("D3 06 0F 02 00", bytes, sizeof(bytes)), 0u);
+  CHECK_EQ(parse_hex_bytes("D3 6", bytes, sizeof(bytes)), 0u);
+  CHECK_EQ(parse_hex_bytes("D3G6", bytes, sizeof(bytes)), 0u);
+  CHECK_EQ(parse_hex_bytes("  ", bytes, sizeof(bytes)), 0u);
+  CHECK_EQ(parse_hex_bytes(nullptr, bytes, sizeof(bytes)), 0u);
+}
+
 void test_battery() {
   CHECK_EQ(rm_battery_mv(0x85), 2508);
   CHECK_EQ(rm_battery_mv(0x00), 3679);
@@ -195,6 +209,7 @@ void run_message_tests() {
   test_rm_status();
   test_rm_reports();
   test_device_id_text();
+  test_hex_bytes();
   test_battery();
   test_describe();
   test_raw_line();

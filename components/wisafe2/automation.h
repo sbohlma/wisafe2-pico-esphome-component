@@ -41,5 +41,12 @@ template<typename... Ts> class QueryDeviceAction : public Action<Ts...>, public 
   uint8_t request_code_;
 };
 
+template<typename... Ts> class SendRawAction : public Action<Ts...>, public Parented<WiSafe2Component> {
+ public:
+  TEMPLATABLE_VALUE(std::string, payload)
+
+  void play(const Ts &...x) override { this->parent_->send_raw(this->payload_.value(x...)); }
+};
+
 }  // namespace wisafe2
 }  // namespace esphome

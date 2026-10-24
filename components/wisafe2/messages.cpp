@@ -312,5 +312,26 @@ bool parse_device_id(const char *text, uint8_t *id) {
   return true;
 }
 
+size_t parse_hex_bytes(const char *text, uint8_t *out, size_t out_cap) {
+  if (text == nullptr) {
+    return 0;
+  }
+  size_t count = 0;
+  for (const char *pos = text; *pos != '\0';) {
+    if (*pos == ' ') {
+      ++pos;
+      continue;
+    }
+    const int hi = hex_value(pos[0]);
+    const int lo = hi < 0 ? -1 : hex_value(pos[1]);
+    if (lo < 0 || count == out_cap) {
+      return 0;
+    }
+    out[count++] = static_cast<uint8_t>((hi << 4) | lo);
+    pos += 2;
+  }
+  return count;
+}
+
 }  // namespace wisafe2
 }  // namespace esphome

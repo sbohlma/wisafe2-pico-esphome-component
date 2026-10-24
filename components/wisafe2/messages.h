@@ -115,6 +115,9 @@ int count_sids(uint64_t map);
 void format_device_id(const uint8_t *id, char *out, size_t out_len);
 // Umkehrung von format_device_id: "14B8A5" ergibt A5 B8 14. false bei ungültiger Eingabe.
 bool parse_device_id(const char *text, uint8_t *id);
+// Hex-Bytes wie "D3 06 0F 02", Paare getrennt durch Leerzeichen oder ohne Trenner. Anzahl der Bytes, 0 bei
+// ungültiger Eingabe, leerer Eingabe oder mehr als out_cap Bytes.
+size_t parse_hex_bytes(const char *text, uint8_t *out, size_t out_cap);
 
 }  // namespace wisafe2
 }  // namespace esphome

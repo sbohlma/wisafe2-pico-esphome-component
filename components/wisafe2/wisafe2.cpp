@@ -48,6 +48,14 @@ static const char *const STATUS_NO_REPLY = "keine Antwort";
 static const char *const STATUS_UNPAIRED = "ungekoppelt";
 static const char *const STATUS_ID_MISMATCH = "Geräte-ID weicht ab";
 
+static void format_bytes(const uint8_t *bytes, size_t len, char *out, size_t out_len) {
+  size_t used = 0;
+  out[0] = '\0';
+  for (size_t index = 0; index < len && used + 4 <= out_len; ++index) {
+    used += std::snprintf(out + used, out_len - used, index == 0 ? "%02X" : " %02X", bytes[index]);
+  }
+}
+
 void WiSafe2Component::set_identity(uint8_t id0, uint8_t id1, uint8_t id2, uint16_t model) {
   this->identity_.valid = true;
   this->identity_.device_id[0] = id0;
@@ -95,11 +103,7 @@ bool WiSafe2Component::send_bytes(const uint8_t *bytes, size_t len, uint8_t &id)
   this->raw_tx_len_ = static_cast<uint8_t>(len);
   this->raw_tx_id_ = command_id;
   char text[ipc::Command::MAX_LEN * 3 + 1];
-  size_t used = 0;
-  for (size_t index = 0; index < len && used + 4 <= sizeof(text); ++index) {
-    used += std::snprintf(text + used, sizeof(text) - used, index == 0 ? "%02X" : " %02X", bytes[index]);
-  }
-  text[used] = '\0';
+  format_bytes(bytes, len, text, sizeof(text));
   ESP_LOGD(TAG, "Sende %s", text);
   return true;
 }
@@ -381,6 +385,46 @@ void WiSafe2Component::report_network_test_(const Completion &completion) {
   if (this->last_event_sensor_ != nullptr) {
     this->last_event_sensor_->publish_state("Netztest: von der Brücke ausgelöst, alle Melder ertönen");
   }
+}
+
+void WiSafe2Component::send_raw(const std::string &hex) {
+  uint8_t payload[MAX_PAYLOAD];
+  const size_t len = parse_hex_bytes(hex.c_str(), payload, sizeof(payload));
+  char text[120];
+  text[0] = '\0';
+  if (len == 0) {
+    std::snprintf(text, sizeof(text), "Rohbefehl: \"%.40s\" ungültig, erwartet 1–%u Hex-Bytes wie D3 06 0F 02",
+                  hex.c_str(), static_cast<unsigned>(MAX_PAYLOAD));
+  } else if (this->start_state_ != StartState::Running || this->init_pending_) {
+    std::snprintf(text, sizeof(text), "Rohbefehl: Modul noch nicht bereit");
+  }
+  if (text[0] != '\0') {
+    ESP_LOGW(TAG, "%s", text);
+    this->publish_last_reply_(text);
+    return;
+  }
+  if (!this->enqueue_(Request::remote(TAG_RAW, payload, len))) {
+    return;
+  }
+  char shown[MAX_PAYLOAD * 3 + 1];
+  format_bytes(payload, len, shown, sizeof(shown));
+  ESP_LOGI(TAG, "Rohbefehl %s angefordert%s%s", shown,
+           this->scheduler_.remote_open() ? "; startet nach der offenen Fernanfrage" : "",
+           this->raw_log_ ? "" : "; Rohrahmen loggen ist aus");
+}
+
+void WiSafe2Component::report_raw_(const Completion &completion) {
+  char shown[MAX_PAYLOAD * 3 + 1];
+  format_bytes(completion.request.payload, completion.request.len, shown, sizeof(shown));
+  char text[120];
+  if (completion.outcome == Outcome::Ok) {
+    std::snprintf(text, sizeof(text), "Rohbefehl %s: quittiert (46)", shown);
+  } else {
+    std::snprintf(text, sizeof(text), "Rohbefehl %s: %s nach %u Sendeversuch(en)", shown,
+                  outcome_name(completion.outcome), static_cast<unsigned>(completion.request.send_attempts));
+  }
+  ESP_LOGI(TAG, "%s", text);
+  this->publish_last_reply_(text);
 }
 
 void WiSafe2Component::publish_remote_requests_() {
@@ -911,6 +955,9 @@ void WiSafe2Component::handle_completion_(const Completion &completion) {
     }
     case TAG_NETWORK_TEST:
       this->report_network_test_(completion);
+      break;
+    case TAG_RAW:
+      this->report_raw_(completion);
       break;
     default:
       break;

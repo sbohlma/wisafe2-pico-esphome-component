@@ -92,6 +92,10 @@ class WiSafe2Component : public Component, public Transport {
   // Button „Netztest“ (E1): 70 mit der eigenen Identität, alle Melder im Netz ertönen. Höchstens einmal je
   // NETWORK_TEST_LOCK_MS.
   void network_test();
+  // Aktion wisafe2.send_raw: beliebiger Befehl an das RM, als Hex wie "D3 06 0F 02", ohne Rahmenende. Gilt als
+  // Fernanfrage: Ergebnis ist die Quittung 46/47, eine Antwort aus dem Netz wird nicht erwartet und erscheint
+  // nur im Log.
+  void send_raw(const std::string &hex);
 
   static constexpr uint32_t NETWORK_TEST_LOCK_MS = 60000;
 
@@ -108,6 +112,7 @@ class WiSafe2Component : public Component, public Transport {
     TAG_QUERY_DEVICE,
     TAG_DISCOVERY,
     TAG_NETWORK_TEST,
+    TAG_RAW,
   };
 
   void start_module_();
@@ -142,6 +147,7 @@ class WiSafe2Component : public Component, public Transport {
   void publish_entities_(uint32_t now);
   void report_event_(const RadioMessage &msg);
   void report_network_test_(const Completion &completion);
+  void report_raw_(const Completion &completion);
   bool next_template_node_(const Node *&node);
   void service_template_(uint32_t now);
   void note_module_outcome_(const Completion &completion);
