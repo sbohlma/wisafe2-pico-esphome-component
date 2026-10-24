@@ -778,3 +778,10 @@ Versuch mit `wisafe2.send_raw` (Rohrahmen loggen an, je Befehl warten, bis 60 s 
 2. Ergibt ein Wert beim Dongle ein `70` oder ein `C1`, denselben Wert an SID 26 (ST-630-DE): `D3 06 1A xx`. Zu notieren: ob SID 26 tönt und was zurückkommt.
 
 Abbruch bei `47`, bei unerwartetem Verhalten des Dongles (etwa Verlust der Kopplung) oder wenn ein Melder ertönt, der nicht das Ziel ist.
+
+Ergebnis vom 24.10.2026 (13:01–13:17):
+
+- `D3 06 0F 01` an den Dongle: sofort `47`. SID 15 steht in keiner SID-Map (P8), der Dongle taugt nicht als Ziel.
+- Ersatzweise an die eigene SID 20: `D3 06 14 xx` mit `xx` = 01, 02, 04, 08, 10, 20, 40, 80. Jedes Mal `46`, und der Dongle hörte nach 3 bis 7 s ein bis zwei Kopien von `C3 00 00 00 14`, nach `80` wegen einer `22`-Flutung von SID 24 erst nach 28 s. Die Brücke selbst bekam ihr `C3` nie; das RM sendet eine Anfrage an die eigene SID nur aus. Kopplung und Melder blieben unberührt.
+- Folgerung: Das letzte Byte von `D3 06` unterscheidet nur `00` (Remote-Status) und ungleich `00` (ID-Anfrage `C3`). Ein Test je Melder ist darüber nicht möglich. Der Original-Mesh-Monitor kennt binär sonst nur `D3 03`, `D3 04`, `D3 12 01` und `D3 12 65`. Weitere `D3`-Unterbefehle durchzuprobieren lohnt das Risiko nicht (Init, Einlernen, Reset, Netzkarte). Der Einzeltest bleibt offen; `wisafe2.send_raw` bleibt für spätere Versuche.
+- Textbefehl am normalen RM (24.10.2026, 17:27–17:28): `3E 54 20 31 34 7E` (`>T 14`) und `3E 54 20 31 41 7E` (`>T 1A`), also dieselben Bytes wie am Dongle. Das RM quittierte mit `46` und flutete beide als Nachricht vom Typ `3E` mit Absender SID 20; das W2-MM hörte 24 bzw. 19 Kopien. SID 26 tönte nicht, kein Host antwortete. Die Textbefehle kennt nur die Monitor-Firmware des W2-MM-RM. Nicht wiederholen: Jeder Versuch flutet das ganze Netz.
